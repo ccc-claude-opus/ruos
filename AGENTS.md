@@ -13,7 +13,8 @@ ruos：用 Rust 寫的能力式（capability）微核心教學作業系統，內
 ./run.sh aarch64-el2             # ARM，virtualization=on，從 EL2 進入再降到 EL1
 ./run.sh wasm [port]             # 建置 kernel.wasm + ruos serve（含 registry），開 http://127.0.0.1:8780（預覽：.claude/launch.json 的 `ruos` 設定，埠 8781）
 ./run.sh build riscv64 aarch64 wasm   # 只建置，輸出在 build/
-./run.sh dist                    # 建全部，放進 ruos/assets（發布用；cd ruos && cargo package / publish）
+./run.sh dist                    # 建全部，放進 ruos/assets（發布用）
+./run.sh publish [--dry-run]     # 檢查 git 乾淨 → dist → cargo publish --allow-dirty（使用者自己發布）
 NOBUILD=1 PODSRV=127.0.0.1:PORT ./run.sh riscv64   # 不重建；QEMU 經 10.0.2.100:80 連到那個 ruos serve
 ./test.sh [host] [riscv64] [aarch64] [aarch64-el2] [wasm]   # 預設全部；log 在 build/test-*.log
 cargo test --release             # 主機端 crate：objstore（BLAKE3 對照 blake3 crate）、podimg、ruos
@@ -70,7 +71,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
 - 專案名稱是 **ruos**（2026-10-30 從 rust-os 改名；格式字串一併改：`ruos manifest 1`、`ruos index 1`、`ruos ns 1`、`.ruos-dir`、DTB 的 `ruos,wasm*`；`ROSPACK1` / `ROSDISK1` 沒改）。repo：`/Users/Shared/ccc/project/ruos`，GitHub `ccc-claude-opus/ruos`（2026-10-30 搬來，從新的 git 歷史開始；之前的歷史與 tag `posix-era` 留在舊的 rust-os repo，不在這裡）。
 - `ruos/` 是唯一要發布的 crate（原本的 podsrv；不依賴 workspace 的其他 crate：物件 id 用自己的 `id.rs` + `blake3`）。指令：`ruos [web] [--port N] [--no-open]`（預設：啟動伺服器、開瀏覽器）、`ruos riscv64|aarch64 [--smp N]`（伺服器開在隨機埠的 thread，QEMU 的 guestfwd 連到它；核心寫到 `HOME/kernel-ARCH.bin`、磁碟 `HOME/disk-ARCH.img`）、`ruos serve …`（開發用：run.sh、test.sh、web/test/boot.mjs）。資料在 `$RUOS_HOME` 或 `~/.ruos`；第一次（或新版本）把內含的 registry 放到 `HOME/store`（物件只補缺的，refs 換新版，push 進來的映像留著）。
 - 內含的系統：`./run.sh dist` 建三個平台後填 `ruos/assets/`（`web/*.html|js|css`、`kernel.wasm`、`kernel-riscv64.bin`、`kernel-aarch64.bin`、`store/` = `build/images`）；`ruos/build.rs` 把它打包成 `OUT_DIR/assets.bin`（路徑長度 u32 + 路徑 + 長度 u64 + 內容），`assets.rs` 以 `include_bytes!` 帶著。`ruos/assets` 在 .gitignore 裡，但 Cargo.toml 的 `include` 有它，所以 `cargo package` 會帶上（約 11 MiB，壓縮後 5.2 MiB，crates.io 上限 10 MiB）。沒有 assets 的建置（repo 裡平常的）只能 `ruos serve` 從磁碟供檔。
-- 發布步驟：`./run.sh dist` → `cd ruos && cargo package`（會在隔離環境編一次）→ `cargo publish`（要使用者的 crates.io 帳號；crates.io 要求 Cargo.toml 有 `license`）。使用者端只需要穩定版 Rust（`rust-version = 1.85`）與（要跑 QEMU 時）QEMU。
+- 發布步驟：`./run.sh publish`（使用者自己跑；要 crates.io 帳號）：先確認 git 沒有未 commit 的變更，再 `dist`，再 `cargo publish --allow-dirty`（`ruos/assets` 被 git 忽略，cargo 把它們算成「未 commit」，所以要 `--allow-dirty`；多的引數交給 cargo，例如 `--dry-run`）。使用者端只需要穩定版 Rust（`rust-version = 1.85`）與（要跑 QEMU 時）QEMU。
 
 ## 教學介面（M11–M13）
 

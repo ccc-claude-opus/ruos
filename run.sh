@@ -6,6 +6,7 @@
 #   ./run.sh build riscv64|aarch64|wasm         build only
 #   ./run.sh dist                               build everything into ruos/assets
 #                                               (what `cargo install ruos` carries)
+#   ./run.sh publish [cargo publish args]       dist, then publish the ruos crate
 # NOBUILD=1 boots what is built; PODSRV=HOST:PORT gives QEMU a registry;
 # SMP=N CPUs (default 4).
 set -euo pipefail
@@ -154,10 +155,20 @@ case $cmd in
         cp "$OUT/kernel.wasm" "$OUT/kernel-riscv64.bin" "$OUT/kernel-aarch64.bin" "$a/"
         cp -R "$OUT/images" "$a/store"
         du -sh "$a" ;;
+    publish)
+        # The assets are build output, ignored by git, so cargo calls the
+        # tree dirty: check that everything else is committed first.
+        if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+            echo "run.sh: commit your changes first:" >&2
+            git -C "$ROOT" status --short >&2
+            exit 1
+        fi
+        "$0" dist
+        (cd "$ROOT/ruos" && cargo publish --allow-dirty "$@") ;;
     build)
         for p in "$@"; do
             build "$p"
             if [ "$p" = wasm ]; then build_server; fi
         done ;;
-    *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
