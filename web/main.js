@@ -1,11 +1,14 @@
 // The page: a terminal on the kernel Worker, the lessons, and the system
 // view (the kernel's snapshot, polled once a second while it is shown).
+import { ClusterView } from './cluster.js';
 import { Inspector } from './inspector.js';
 import { renderLessons } from './lessons.js';
 
 const term = document.getElementById('term');
 const status = document.getElementById('status');
 let worker = null;
+// ?machine=NAME: another machine (its own disk; another node of the cluster).
+const machine = (new URLSearchParams(location.search).get('machine') || '').replace(/[^a-z0-9-]/g, '') || 'browser';
 const tasks = new Map(); // id → task thread Worker (started for the kernel Worker)
 
 // A little of a terminal: text, newlines, the console's erase sequences
@@ -84,9 +87,7 @@ function boot() {
       status.textContent = `核心已關機（代碼 ${m.code}）`;
     }
   };
-  // ?machine=NAME: another machine (its own disk; another node of the cluster).
-  const machine = (new URLSearchParams(location.search).get('machine') || 'browser').replace(/[^a-z0-9-]/g, '');
-  worker.postMessage({ type: 'boot', url: new URL('kernel.wasm', location.href).href, machine: machine || 'browser' });
+  worker.postMessage({ type: 'boot', url: new URL('kernel.wasm', location.href).href, machine });
   kbd.focus();
 }
 
@@ -126,7 +127,8 @@ const typeCommand = (cmd) => {
 renderLessons(document.getElementById('lessons'), typeCommand);
 
 const inspector = new Inspector(document.getElementById('system'));
-const tabs = [['tab-lessons', 'lessons'], ['tab-system', 'system']];
+const cluster = new ClusterView(document.getElementById('cluster'), machine);
+const tabs = [['tab-lessons', 'lessons'], ['tab-system', 'system'], ['tab-cluster', 'cluster']];
 for (const [tab, panel] of tabs) {
   document.getElementById(tab).onclick = () => {
     for (const [t, p] of tabs) {
@@ -134,10 +136,13 @@ for (const [tab, panel] of tabs) {
       document.getElementById(p).hidden = p !== panel;
     }
     if (panel === 'system') worker?.postMessage({ type: 'snapshot' });
+    if (panel === 'cluster') cluster.refresh();
   };
 }
 setInterval(() => {
-  if (!document.hidden && !document.getElementById('system').hidden) worker?.postMessage({ type: 'snapshot' });
+  if (document.hidden) return;
+  if (!document.getElementById('system').hidden) worker?.postMessage({ type: 'snapshot' });
+  if (!document.getElementById('cluster').hidden) cluster.refresh();
 }, 1000);
 
 boot();

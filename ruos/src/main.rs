@@ -18,6 +18,8 @@
 //!   WebSocket /v1/remote?machine=NAME&session=ID   the remote channel (remote.rs)
 //!   GET /v1/pods            `SESSION/KEY` lines: the writable layers kept here
 //!   GET /v1/pods/SESSION/KEY/files/PATH
+//!   GET /v1/cluster         the cluster's records (kube), JSON:
+//!                           {"now": MS, "records": {KEY: {"version", "updated", "value"}}}
 //!
 //! `--port 0` picks a free port; the URL is printed as
 //! `ruos: listening on http://ADDR:PORT`. Data (the registry, disks,
@@ -249,6 +251,10 @@ fn serve(req: Request, cfg: &Config) {
     }
     if path == "/v1/remote" {
         return remote_channel(req, cfg, query);
+    }
+    if path == "/v1/cluster" {
+        let Some(store) = cfg.store.as_ref() else { return respond(req, 404, "text/plain", "no-cache", b"no store\n".to_vec()) };
+        return respond(req, 200, "application/json", "no-cache", cluster::json(store).into_bytes());
     }
     if let Some(r) = path.strip_prefix("/v1/") {
         return match registry(cfg, r) {

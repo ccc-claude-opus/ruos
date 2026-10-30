@@ -20,6 +20,8 @@ use crate::kubelet::revision;
 
 /// A node is up while it wrote its record this recently (ms).
 pub const NODE_LEASE: u64 = 8000;
+/// A node gone this long is forgotten.
+const NODE_FORGET: u64 = 5 * 60 * 1000;
 
 pub fn node_up(api: &Api, node: &str) -> bool {
     api.get(&format!("nodes/{node}")).is_some_and(|r| api.now().saturating_sub(r.updated) < NODE_LEASE)
@@ -137,6 +139,12 @@ impl Controller {
             .map(|(k, _)| String::from(k))
             .collect();
         for k in stale {
+            api.delete(&k);
+        }
+        let now = api.now();
+        let gone: Vec<String> =
+            api.prefix("nodes/").filter(|(_, r)| now.saturating_sub(r.updated) >= NODE_FORGET).map(|(k, _)| String::from(k)).collect();
+        for k in gone {
             api.delete(&k);
         }
         for (d, want, rev) in deploys {

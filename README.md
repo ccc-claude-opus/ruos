@@ -39,18 +39,23 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十三課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
 1. **handle 就是能力**：`handles`、`ns` 看 shell 自己持有什麼
-2. **只給需要的**：`run snoop` 與 `run snoop console store`，程式只拿得到你給的
-3. **記憶體物件與寫入時複製**：`mem`
-4. **內容定址的映像**：`images`、`image hello`、`ls hello:`、`cat hello:/etc/motd`
-5. **pod：隔離與額度**：`dock run -d --mem 4M hog`，看 quota 樹被用滿
-6. **可寫層與 commit**：`dock run --name w writer`、`dock commit w snap`
-7. **自己做一個映像**：`dock write` 一個 Podfile、`dock build`
-8. **同一份程式，三種機器**：多架構映像、wasmrt
+1. **只給需要的**：`run snoop` 與 `run snoop console store`，程式只拿得到你給的
+1. **記憶體物件與寫入時複製**：`mem`
+1. **內容定址的映像**：`images`、`image hello`、`ls hello:`、`cat hello:/etc/motd`
+1. **pod：隔離與額度**：`dock run -d --mem 4M hog`，看 quota 樹被用滿
+1. **可寫層與 commit**：`dock run --name w writer`、`dock commit w snap`
+1. **自己做一個映像**：`dock write` 一個 Podfile、`dock build`
+1. **同一份程式，三種機器**：多架構映像、wasmrt
+1. **宣告想要的狀態（kube）**：`kube apply`、殺掉 pod 看它回來、`kube scale`、back-off、Space
+1. **Service 與 Config**：`kube call echo hi`、只有 `uses` 的 pod 連得到、改 Config 觸發滾動更新、`kube rollout undo`、liveness
+1. **叢集**：另開一頁 `?machine=b2` 多一個節點、`kube get nodes`、pod 分到哪台、關掉那頁看 pod 搬家
+
+「叢集」頁畫出 server 上 kube 的記錄：每個節點（機器）一張卡片，列出分到它的 pod 與狀態，下面是 Deployment 與最近的事件。
 
 「系統」頁每秒更新一次：任務是圓點，兩個任務各持有同一條 channel 的一端就連一條線；點一個任務會列出它的 handle 表，並用文字說明每個 handle 連到哪裡；下方是 quota 樹，每個 pod 是一棵子樹。
 

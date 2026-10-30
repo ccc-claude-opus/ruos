@@ -60,6 +60,36 @@ pub fn with<T>(store: &Path, f: impl FnOnce(&mut Kv) -> T) -> T {
     f(g.as_mut().unwrap())
 }
 
+fn quote(s: &str) -> String {
+    let mut o = String::from('"');
+    for c in s.chars() {
+        match c {
+            '"' => o += "\\\"",
+            '\\' => o += "\\\\",
+            '\n' => o += "\\n",
+            c if (c as u32) < 0x20 => o += &format!("\\u{:04x}", c as u32),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// Every record, for the web page's cluster view.
+pub fn json(store: &Path) -> String {
+    with(store, |kv| {
+        let recs: Vec<String> = kv
+            .recs
+            .iter()
+            .map(|(k, r)| {
+                let v = String::from_utf8_lossy(&r.value);
+                format!("{}:{{\"version\":{},\"updated\":{},\"value\":{}}}", quote(k), r.version, r.updated, quote(&v))
+            })
+            .collect();
+        format!("{{\"now\":{},\"records\":{{{}}}}}", now_ms(), recs.join(","))
+    })
+}
+
 pub enum Put {
     Ok(u64),
     Conflict,

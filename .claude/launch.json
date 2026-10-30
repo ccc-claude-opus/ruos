@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ruos",
+      "runtimeExecutable": "./target/release/ruos",
+      "runtimeArgs": ["serve", "--port", "8781", "--web", "web", "--kernel", "build/kernel.wasm", "--store", "build/store"],
+      "port": 8781
+    }
+  ]
+}

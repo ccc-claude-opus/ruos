@@ -127,6 +127,67 @@ export const LESSONS = [
       { cmd: 'dock run hello-wasm', note: '照樣能跑' },
     ],
   },
+  {
+    title: '11. 宣告想要的狀態（kube）',
+    text: [
+      '`dock run` 是命令：「現在跑一個」。kube 則是宣告：寫下「想要兩個 worker 一直在跑」（一個 TOML manifest），kube 就不停比對實際狀態並修正：少了補、多了刪、掛了重啟。這就是 Kubernetes 的核心想法（reconcile loop）。',
+      'kube 自己也只是一個程式：它手上只有一個 dock client（和映像庫），所有動作都是請 dock 去做。到右邊「叢集」頁看 pod 怎麼變。',
+    ],
+    steps: [
+      { cmd: 'cat kube/web.toml', note: '一個 Deployment：image、replicas、restart' },
+      { cmd: 'kube apply kube/web.toml', note: '交出想要的狀態' },
+      { cmd: 'kube get pods', note: 'READY、STATUS、RESTARTS、REV、NODE' },
+      { cmd: 'kill web-1', note: '殺掉一個……' },
+      { cmd: 'kube get pods', note: '……一秒後它又回來了，RESTARTS 加一' },
+      { cmd: 'kube scale web 4', note: '要四個' },
+      { cmd: 'kube describe web', note: '設定、每個 pod、最近的事件' },
+      { cmd: 'kube apply kube/flaky.toml', note: '一個兩秒後就失敗的 pod：重啟的間隔愈來愈長（back-off）' },
+      { cmd: 'kube describe flaky | grep -i pod', note: '看它的事件' },
+      { cmd: 'kube apply kube/small.toml kube/crowd.toml', note: 'Space：一群 pod 共用的額度；放不下的就 Pending' },
+      { cmd: 'kube get pods | grep crowd', note: 'crowd-3 等著有空間' },
+      { cmd: 'kube delete web; kube delete flaky; kube delete crowd', note: '收拾' },
+    ],
+  },
+  {
+    title: '12. Service 與 Config：沒有位址的網路',
+    text: [
+      '`serves = "echo"` 的 pod 就是 service echo；`uses = ["echo"]` 的 pod 名稱空間裡才會有 `svc:echo`。要連線時，pod 建一條新的 channel，把一端經 `svc:echo` 交出去，kube 把它交給一個就緒的 echo pod（輪流），之後兩邊直接談。沒有 IP、沒有 DNS：沒拿到 `svc:echo` 的 pod 根本連不到。',
+      'kube 每 2 秒 ping 一次提供服務的 pod：不回應就不再分到連線（readiness），太久沒回就重啟（liveness）。Config 的檔案和環境變數疊成映像上的一層；改了 Config 或範本，就會滾動更新：先多一個新 pod，它就緒了才刪一個舊的。',
+    ],
+    steps: [
+      { cmd: 'kube apply kube/echo.toml', note: '兩個 echo pod 組成 service echo' },
+      { cmd: 'kube call echo hi', note: '看是誰回答的……' },
+      { cmd: 'kube call echo hi', note: '……輪到另一個' },
+      { cmd: 'cat kube/greeting.toml kube/front.toml', note: '一個 Config、一個會呼叫 echo 的 pod' },
+      { cmd: 'kube apply kube/greeting.toml kube/front.toml', note: '套用' },
+      { cmd: 'kube logs front-1', note: '它讀到的設定，與 echo 的回答' },
+      { cmd: 'kube get svc', note: '每個 service：就緒的 pod、使用者、交出的連線' },
+      { cmd: "sed 's/v1/v2/' kube/greeting.toml > /tmp/greeting.toml", note: '改一下設定' },
+      { cmd: 'kube apply /tmp/greeting.toml', note: '新的 revision 開始滾動更新' },
+      { cmd: 'kube rollout status front', note: '更新到哪裡了' },
+      { cmd: 'kube rollout history front', note: '每個 revision 跑哪個映像（Config 疊上去的衍生映像）' },
+      { cmd: 'kube rollout undo front', note: '退回上一版' },
+      { cmd: 'kube apply kube/stuck.toml', note: '一個兩秒後就不回應的 pod：等十秒看 liveness' },
+      { cmd: 'kube describe stuck', note: 'Liveness probe failed → 重啟' },
+    ],
+  },
+  {
+    title: '13. 叢集：很多台機器',
+    text: [
+      '連到同一個 server 的機器就是一個叢集，每台機器是一個節點。在新分頁打開這個網址再加上 `?machine=b2`，就多了一台機器（自己的磁碟、自己的核心）。',
+      '想要的狀態和每個 pod 的狀況都記在 server 上。其中一台機器的 kube 是 leader（靠租約：一直續約的那台），由它決定每個 pod 放哪個節點：活著的、架構合的、`node = "…"` 指定的、pod 最少的。每台機器的 kube 只跑分給自己的 pod。',
+      '把另一個分頁關掉：它不再續約，8 秒後就算掉線，它的 pod 在別的節點重建；如果它是 leader，別台會接手。',
+    ],
+    steps: [
+      { cmd: 'kube get nodes', note: '節點、架構、誰是 leader' },
+      { cmd: 'kube apply kube/spread.toml', note: '四個 pod' },
+      { cmd: 'kube get pods', note: 'NODE 欄：分到哪台機器' },
+      { cmd: 'cat kube/pinned.toml', note: '只放在 node-b 的 pod' },
+      { cmd: 'kube apply kube/pinned.toml', note: '沒有 node-b 的話就 Unschedulable' },
+      { cmd: 'kube get pods', note: '關掉另一頁後再看一次' },
+      { cmd: 'kube delete spread; kube delete pinned', note: '收拾' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

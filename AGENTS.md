@@ -67,7 +67,8 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   15. 「學生能像在 Linux 上一樣練習」（使用者確認的目標）：shell 語言（小 sh）、更多文字指令、↑ ↓ 歷史 — **完成**
   17. 類 k8s（單機宣告式）：`kube` 服務、Deployment / Space、reconcile、重啟退避 — **完成**
   18. capability 版 Service、Config、probe、滾動更新 — **完成**
-  19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**（之後：M20 網頁叢集圖與課程）
+  19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**
+  20. 網頁的「叢集」分頁與第 11–13 課 — **完成**
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -90,6 +91,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - 限制：Service 連線只交給同一個節點上的 pod（channel 不能跨機器）；`kube logs` 只看得到本機的 pod；沒有容量篩選（dock 的 quota 拒絕就 Pending）。
   - `kube get nodes`（STATUS Ready / NotReady、ROLE leader）；`get pods` 多了 NODE 欄。init 在 shell 結束時先停 kube，再請 dock `shutdown`（停掉所有 pod：pod 拿著 console client，否則 console 不會結束、機器不會關）。
   - 測試：test.sh 的 wasm 在 boot 2 之後跑 `cluster_test`：另起一個 ruos serve，先開 `node-b`（`tests/cluster-b.input`：sleep 25 後 exit），它的 shell ready 後再開 `test`（`tests/cluster.input`），比對 `tests/cluster.expect`（不是 m 開頭，所以 boot 1 不比對它）：兩個節點、pod 分到兩邊、`node = "node-b"` 的 pod、node-b 離開後它的 pod 在 test 重建、留下的 pinned 變 Unschedulable、leader 交接。`web/test/boot.mjs --server URL` 用已經在跑的 server。範例 `spread.toml`、`pinned.toml`。
+- **M20（網頁）**：ruos serve 的 `GET /v1/cluster`（所有記錄的 JSON：`{now, records: {KEY: {version, updated, value}}}`，`cluster::json`）。`web/cluster.js` 的 `ClusterView`：「叢集」分頁顯示時每秒抓一次（內容沒變就不重畫）；節點卡片（Ready / NotReady、leader、「這一頁」= 頁面的 `?machine=`）裡列出分到它的 pod（顏色 = 狀態）、Unschedulable 的另一張卡；Deployment 表（就緒 / 想要、revision、更新中、映像、serves / uses）；最近的事件（所有 `events/*` 合併，新的在前）。`lessons.js` 第 11 課（宣告式、自我修復、擴縮、back-off、Space）、第 12 課（Service、Config、滾動更新、liveness）、第 13 課（叢集：另開 `?machine=b2` 分頁、排程、節點離開）。leader 會把 5 分鐘沒更新的 `nodes/N` 刪掉。`.claude/launch.json` 的 `ruos`（埠 8781）是預覽用的 ruos serve。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）
@@ -108,7 +110,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
 - **dock** 多了 `ls POD [DIR]`、`cat POD FILE`（經 pod 的 overlay；超過 16 KiB 或有 NUL 就只報大小）。
 - **apps/snoop**：印出自己的名稱、試遍 handle 0..1023 數自己有幾個、有 store 就列映像、有 console 就經它寫字。`run snoop` 與 `run snoop console store` 是第 2 課。
 - **console** 只剩行模式（`WRITE`、`READ_LINE`、`CONNECT`）；Ctrl-C 丟掉正在打的那一行。↑ ↓（`ESC [ A` / `ESC [ B`；其他 ESC 序列丟掉）叫回之前交出去的行（最多 64 行，不重複記同一行），正在顯示時以 `ESC [ n D ESC [ K`（依顯示寬度）擦掉再印。網頁的 keydown 把方向鍵送成這兩個序列，Tab 不送任何東西（留在終端機）。
-- **網頁**（`web/`）：左邊終端機（`main.js`），右邊分頁「課程」（`lessons.js`：十課，每課幾段說明 + 可點的指令，點了就以 UTF-8 + CR 送進鍵盤）與「系統」（`inspector.js`）。系統頁顯示時每秒向核心 Worker 要一次 snapshot；只有開機時間變了就只更新摘要（不重畫，保住鍵盤焦點）。圖：活著的任務排成一圈，兩個任務各持有同一條 channel 的一端就連線，remote channel 連到「伺服器」；點任務（或 quota 樹裡的晶片）列出它的 handle 表與「連到哪裡」（channel 的對端是誰的哪個 handle、共用的 Memory、task handle 指向誰）；quota 樹：根 → pods 總額 → 每個 pod（用量長條、任務數），任務掛在被記帳的 quota 下。手機寬度上下排列。
+- **網頁**（`web/`）：左邊終端機（`main.js`），右邊分頁「課程」（`lessons.js`：十三課，每課幾段說明 + 可點的指令，點了就以 UTF-8 + CR 送進鍵盤）與「系統」（`inspector.js`）。系統頁顯示時每秒向核心 Worker 要一次 snapshot；只有開機時間變了就只更新摘要（不重畫，保住鍵盤焦點）。圖：活著的任務排成一圈，兩個任務各持有同一條 channel 的一端就連線，remote channel 連到「伺服器」；點任務（或 quota 樹裡的晶片）列出它的 handle 表與「連到哪裡」（channel 的對端是誰的哪個 handle、共用的 Memory、task handle 指向誰）；quota 樹：根 → pods 總額 → 每個 pod（用量長條、任務數），任務掛在被記帳的 quota 下。手機寬度上下排列。
 - **`kernel_snapshot` / `kernel_snapshot_len`**（只有 wasm32，`kernel/src/snapshot.rs`）：JSON `{uptime_ms, tasks: [{id, name, threads, exit, quota, handles: [{h, type, rights, id, peer?, queued?, task?, size?}]}], quotas: [{id, parent, mem, tasks, threads}]}`；物件的 id 是它在核心裡的位址（同一物件、channel 兩端都對得起來），`peer` 是 `"host"` 表示 remote channel，上限 `null` = 無上限。這是從外面看（像除錯器），系統裡面的程式仍然只看得到自己的 handle。`kernel_host.js` 的 `snapshot()`、kernel Worker 的 `{type:'snapshot'}` 訊息。
 - **斷線重連**（`kernel_host.js` 的 `remoteLink`）：WebSocket URL 帶隨機的 `session=`（每次開機一個），ruos serve 以 `w-SESSION` 當 session 名稱（可寫層在 `STORE/pods/w-SESSION/`），所以重連後還是同一份可寫層；store 一次只有一個請求，斷線時沒收到回覆的請求在重連後重送（store 的請求都可以重做），斷線期間的請求先排隊；退避 250 ms 起、加倍到 8 s。原生平台還沒有：QEMU 的 guestfwd（10.0.2.100:80）每次開機只能連一次。
 
