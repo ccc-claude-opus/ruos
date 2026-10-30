@@ -25,6 +25,7 @@ pub mod fs;
 pub mod image;
 mod heap;
 pub mod ipc;
+pub mod kube;
 pub mod net;
 pub mod ns;
 pub mod store;

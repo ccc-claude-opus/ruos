@@ -42,6 +42,9 @@ pod（映像 + quota + 名稱空間 + 可寫層）
   dock run [-d] [--name N] [--mem SIZE] [--tasks N] IMAGE [ARGS]
   dock ps | stop POD | logs POD | rm POD | ls POD [DIR] | cat POD FILE
   dock write POD FILE TEXT | commit POD IMAGE | build POD PODFILE | push IMAGE
+kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
+  kube apply FILE...   kube get [pods|deploy|spaces]   kube describe NAME
+  kube scale NAME N    kube delete NAME   kube logs POD
 ";
 
 /// Flags (`-x`, `-n N`) and the other arguments.
@@ -545,6 +548,7 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
             }
             Ok(Vec::new())
         }
+        "kube" => sh.kube(&argv[1..]),
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -710,6 +714,35 @@ impl Sh {
     }
 }
 
+impl Sh {
+    /// kube: `apply` sends the files' text; the rest goes as it is.
+    fn kube(&self, argv: &[String]) -> Out {
+        let k = self.kube.ok_or("kube: not available")?;
+        let ask = |msg: &str| -> Result<String, String> {
+            let r = k.request(msg).map_err(err("kube"))?;
+            match r.strip_prefix("error ") {
+                Some(m) => Err(format!("kube: {}", m.trim_end())),
+                None if r.is_empty() || r.ends_with('\n') => Ok(r),
+                None => Ok(r + "\n"),
+            }
+        };
+        if argv.first().map(String::as_str) != Some("apply") {
+            let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+            return ask(&words.join(" ")).map(String::into_bytes);
+        }
+        let files: Vec<&String> = argv[1..].iter().filter(|a| *a != "-f").collect();
+        if files.is_empty() {
+            return Err(String::from("kube apply FILE..."));
+        }
+        let mut out = String::new();
+        for f in files {
+            let src = self.fs()?.read(&self.path(f)).map_err(err(f))?;
+            out += &ask(&format!("apply\n{}", text(&src))).map_err(|m| format!("{m} ({f})"))?;
+        }
+        Ok(out.into_bytes())
+    }
+}
+
 pub fn dock_cmd(con: &Console, d: Dock, cmd: &str) {
     let r = match d.request(cmd) {
         Ok(r) => r,
@@ -769,7 +802,7 @@ const BUILTINS: &[&str] = &[
     "help", "echo", "pwd", "cd", "ls", "cat", "tree", "stat", "mkdir", "rmdir", "rm", "cp", "mv", "touch", "save", "head", "tail", "wc",
     "grep", "sort", "uniq", "cut", "tr", "sed", "seq", "tee", "basename", "dirname", "printf", "env", "set", "export", "unset", "read",
     "find", "rev", "tac", "nl", "which", "type", "sh", ".", "source", "test", "[", "true", "false", "date", "uptime", "clear", "history",
-    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock",
+    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube",
 ];
 
 /// test / [ : -e -f -d -s -z -n, = !=, -eq -ne -lt -le -gt -ge, !.

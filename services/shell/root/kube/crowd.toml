@@ -1,0 +1,11 @@
+# Three pods in the space small, which has room for two tasks: the third
+# stays Pending (QuotaExceeded) until there is room.
+kind = "Deployment"
+name = "crowd"
+space = "small"
+image = "worker"
+replicas = 3
+
+[resources]
+mem = "8M"
+tasks = 1

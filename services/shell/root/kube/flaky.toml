@@ -1,0 +1,7 @@
+# A pod that fails after 2 s (worker 2 1: exit code 1): kube restarts it,
+# waiting longer each time (back-off).
+kind = "Deployment"
+name = "flaky"
+image = "worker"
+args = ["2", "1"]
+restart = "on-failure"

@@ -1,0 +1,5 @@
+name = "kube"
+entry = "/bin/kube"
+
+[programs]
+"/bin/kube" = "kube"

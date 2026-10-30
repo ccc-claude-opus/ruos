@@ -86,4 +86,25 @@ dock run --name ww writer-wasm
 dock run bench
 dock run bench-wasm
 dock run ktest-wasm
+kube get
+kube apply kube/web.toml
+kube get pods
+kill web-1
+sleep 2.5
+kube get pods | grep web-1
+kube scale web 1
+kube apply kube/flaky.toml
+sleep 4
+kube describe flaky
+kube apply kube/small.toml kube/crowd.toml
+sleep 1
+kube get pods | grep crowd
+kube get spaces | grep small
+kube describe crowd | grep Pending
+kube logs web-1
+kube apply kube/nosuch.toml
+kube delete web
+kube delete flaky
+kube delete crowd
+kube get deploy
 exit

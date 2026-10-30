@@ -1,0 +1,15 @@
+[package]
+name = "kube"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "kube"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }

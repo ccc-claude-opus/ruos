@@ -1,0 +1,7 @@
+# A Space: a quota that its Deployments' pods share (here 2 tasks).
+kind = "Space"
+name = "small"
+
+[resources]
+mem = "32M"
+tasks = 2

@@ -1,7 +1,7 @@
 //! init: the first task. Handle 0 is the serial port, 1 the boot pack, 2
 //! the root quota; then Mmio + Irq pairs of virtio devices (native) or the
 //! channel to podsrv (wasm32 with a server). Starts the store service from the pack, runs the
-//! kernel tests, then console, dock and a shell; ends with the shell.
+//! kernel tests, then console, dock, kube and a shell; ends with the shell.
 #![no_std]
 #![no_main]
 
@@ -103,8 +103,16 @@ fn main(_arg: usize) -> i64 {
     let ns = Namespace::new().add("console", c).add("store", s.0.0).add("quota", pods.0).add("client", dock_srv.0);
     let Ok(dock_task) = store.spawn("dock", &ns, None) else { return 1 };
 
+    // kube: Deployments made of dock pods; its one capability is a dock client.
+    let Ok((kd, kd_srv)) = Channel::create() else { return 1 };
+    let Ok((kube, kube_srv)) = Channel::create() else { return 1 };
+    if dock.write(b"", &[kd_srv.0]).is_err() {
+        return 1;
+    }
+    let Ok(kube_task) = store.spawn("kube", &Namespace::new().add("dock", kd.0).add("client", kube_srv.0), None) else { return 1 };
+
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
-    let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0);
+    let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0);
     let ns = match net {
         Some(n) => ns.add("net", n.0.0),
         None => ns,
@@ -118,6 +126,8 @@ fn main(_arg: usize) -> i64 {
     };
     let code = shell.wait().unwrap_or(-1);
     println!("init: shell exited ({})", code);
+    let _ = kube_task.kill();
+    let _ = kube_task.wait();
     let _ = dock_task.kill();
     let _ = dock_task.wait();
     // The console ends once its last client is gone.

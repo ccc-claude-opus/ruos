@@ -1,7 +1,12 @@
 //! The dock service's protocol: a request is a text command line, the
 //! reply is text. Commands:
-//!   run [-d] [--name N] [--mem SIZE] [--tasks N] IMAGE  → `ok ID NAME`
+//!   run [-d] [--name N] [--mem SIZE] [--tasks N] [--label K=V]... [--space S] [--quiet] IMAGE [ARGS]
+//!                                                       → `ok ID NAME`
 //!   ps                                                  → a table
+//!   pods                    for programs                → `ID NAME running|exited:CODE|stopped K=V,…|-` lines
+//!   watch                   then events, one a message  → `ok watching`, `event start|exit|stop|rm ID NAME [CODE]`
+//!   space NAME SIZE TASKS   a child quota for pods      → `ok space NAME`
+//!   spaces                                              → a table
 //!   stop ID|NAME                                        → `ok stopped NAME`
 //!   wait ID|NAME   (answered when the pod ends)         → `exit CODE` / `stopped`
 //!   commit ID|NAME IMAGE[:TAG]                          → `ok committed REF ID FILES REMOVED`
@@ -23,7 +28,7 @@ pub struct Dock(pub Channel);
 impl Dock {
     pub fn request(&self, cmd: &str) -> Result<String> {
         self.0.write(cmd.as_bytes(), &[])?;
-        let mut buf = alloc::vec![0u8; 8192];
+        let mut buf = alloc::vec![0u8; crate::MAX_MSG_BYTES];
         let (n, _) = self.0.recv(&mut buf, &mut [])?;
         buf.truncate(n);
         Ok(String::from_utf8(buf).unwrap_or_default())

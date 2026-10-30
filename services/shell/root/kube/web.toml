@@ -1,0 +1,14 @@
+# A Deployment: two copies of worker, always kept running.
+# kube apply kube/web.toml, then kill a pod and watch it come back.
+kind = "Deployment"
+name = "web"
+image = "worker"
+replicas = 2
+restart = "always"
+
+[resources]
+mem = "8M"
+tasks = 2
+
+[labels]
+app = "web"

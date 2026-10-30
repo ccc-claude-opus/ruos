@@ -21,7 +21,7 @@
 ^saved into root:latest [0-9a-f]{12} \(the next boot starts with these files\)$
 ^hello world not \$X$
 ^42$
-^files: 4$
+^files: 5$
 ^== README\.txt$
 ^== note\.txt$
 ^== poem\.txt$

@@ -23,6 +23,7 @@ use alloc::vec::Vec;
 use libsys::console::{Console, MAX_LINE};
 use libsys::dock::Dock;
 use libsys::fs::Fs;
+use libsys::kube::Kube;
 use libsys::ns;
 use libsys::store::Store;
 use libsys::{Channel, cprint, cprintln};
@@ -36,6 +37,7 @@ pub struct Sh {
     pub con: Console,
     pub store: Store,
     pub dock: Option<Dock>,
+    pub kube: Option<Kube>,
     pub fs: Option<Fs>,
     /// Keeps the overlay alive.
     _ctl: Option<Channel>,
@@ -126,6 +128,7 @@ fn main(_arg: usize) -> i64 {
         con,
         store,
         dock: ns::get("dock").map(|d| Dock(Channel(d))),
+        kube: ns::get("kube").map(|k| Kube(Channel(k))),
         fs,
         _ctl: ctl,
         cwd: String::from("/home"),

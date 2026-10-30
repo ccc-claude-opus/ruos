@@ -1,0 +1,6 @@
+# worker: a long-running pod for kube (the lessons' Deployments).
+name = "worker"
+entry = "/bin/worker"
+
+[programs]
+"/bin/worker" = "worker"

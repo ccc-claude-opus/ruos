@@ -2,6 +2,9 @@
 //! its own quota (a child of `quota` in dock's namespace) and namespace
 //! (a console client, a store client, and `fs`: its own overlay of the
 //! image with a writable layer). Clients send text commands (libsys::dock).
+//! A pod may carry labels and live in a space (a child quota that its own
+//! quota comes out of); a client that sends `watch` is told when pods start
+//! and end (kube uses both).
 #![no_std]
 #![no_main]
 
@@ -47,6 +50,10 @@ struct Pod {
     /// Our end of the pod's `log` channel, and what came through it.
     log: Channel,
     output: Vec<u8>,
+    /// `key=value`.
+    labels: Vec<String>,
+    /// Output is kept for `logs` but not shown on the console.
+    quiet: bool,
     removed: bool,
     state: State,
     /// Clients waiting for the pod to end.
@@ -66,6 +73,10 @@ struct Dock {
     quota: Quota,
     clients: Vec<Option<Channel>>,
     pods: Vec<Pod>,
+    /// Clients told about pods starting and ending.
+    watchers: Vec<usize>,
+    /// Named quotas pods can be put in.
+    spaces: Vec<(String, Quota)>,
 }
 
 impl Dock {
@@ -80,6 +91,16 @@ impl Dock {
         }
     }
 
+    /// Tells the watchers: `event start|exit|stop|rm ID NAME [CODE]`.
+    fn notify(&mut self, what: &str, k: usize) {
+        let p = &self.pods[k];
+        let msg = match p.state {
+            State::Exited(c) if what == "exit" => format!("event exit {} {} {c}", p.id, p.name),
+            _ => format!("event {what} {} {}", p.id, p.name),
+        };
+        self.watchers.retain(|&w| self.clients[w].is_some_and(|c| c.write(msg.as_bytes(), &[]).is_ok()));
+    }
+
     fn find(&self, key: &str) -> Option<usize> {
         self.pods.iter().position(|p| !p.removed && (p.name == key || format!("{}", p.id) == key))
     }
@@ -90,7 +111,9 @@ impl Dock {
         loop {
             match self.pods[k].log.read(&mut buf, &mut []) {
                 Ok((n, _)) => {
-                    let _ = self.console.write(&buf[..n]);
+                    if !self.pods[k].quiet {
+                        let _ = self.console.write(&buf[..n]);
+                    }
                     let out = &mut self.pods[k].output;
                     out.extend_from_slice(&buf[..n]);
                     if out.len() > MAX_OUTPUT {
@@ -133,6 +156,7 @@ impl Dock {
 
     fn run(&mut self, args: &[&str]) -> Result<(usize, bool), String> {
         let (mut name, mut mem, mut tasks, mut detach, mut image) = (None, 32 << 20, 8, false, None);
+        let (mut labels, mut quiet, mut space) = (Vec::new(), false, None);
         let mut i = 0;
         while i < args.len() {
             let val = || args.get(i + 1).copied().ok_or_else(|| format!("{} needs a value", args[i]));
@@ -150,6 +174,20 @@ impl Dock {
                     tasks = val()?.parse().map_err(|_| "bad --tasks")?;
                     i += 1;
                 }
+                "--label" => {
+                    let l = val()?;
+                    if !l.contains('=') {
+                        return Err(format!("bad label {l} (KEY=VALUE)"));
+                    }
+                    labels.push(String::from(l));
+                    i += 1;
+                }
+                "--space" => {
+                    let s = val()?;
+                    space = Some(self.spaces.iter().find(|(n, _)| n == s).map(|(_, q)| *q).ok_or_else(|| format!("no space {s}"))?);
+                    i += 1;
+                }
+                "--quiet" => quiet = true,
                 a if a.starts_with('-') => return Err(format!("unknown option {a}")),
                 a => {
                     image = Some(a);
@@ -170,7 +208,7 @@ impl Dock {
         if self.store.index(image).is_err() {
             return Err(format!("no image {image}"));
         }
-        let quota = self.quota.child(mem, tasks, 2 * tasks).map_err(e("quota"))?;
+        let quota = space.unwrap_or(self.quota).child(mem, tasks, 2 * tasks).map_err(e("quota"))?;
         let (mine, theirs) = Channel::create().map_err(e("channel"))?;
         self.console.connect(theirs.0).map_err(e("console"))?;
         let st = self.store.connect().map_err(e("store"))?;
@@ -212,10 +250,13 @@ impl Dock {
             fs: Fs(ctl),
             log,
             output: Vec::new(),
+            labels,
+            quiet,
             removed: false,
             state: State::Running,
             waiters: Vec::new(),
         });
+        self.notify("start", k);
         Ok((k, detach))
     }
 
@@ -235,6 +276,31 @@ impl Dock {
         out
     }
 
+    /// One line per pod for programs: `ID NAME running|exited:CODE|stopped LABELS`.
+    fn pods(&self) -> String {
+        let mut out = String::new();
+        for p in self.pods.iter().filter(|p| !p.removed) {
+            let st = match p.state {
+                State::Running => String::from("running"),
+                State::Exited(c) => format!("exited:{c}"),
+                State::Stopped => String::from("stopped"),
+            };
+            let labels = if p.labels.is_empty() { String::from("-") } else { p.labels.join(",") };
+            out += &format!("{} {} {st} {labels}\n", p.id, p.name);
+        }
+        out
+    }
+
+    fn spaces(&self) -> String {
+        let mut out = format!("{:<10}{:<18}{}\n", "SPACE", "MEMORY", "TASKS");
+        for (name, q) in core::iter::once((&String::from("default"), &self.quota)).chain(self.spaces.iter().map(|(n, q)| (n, q))) {
+            let q = q.info().unwrap_or_default();
+            let mib = |b: u64| b as f64 / (1 << 20) as f64;
+            out += &format!("{:<10}{:<18}{}/{}\n", name, format!("{:.1}/{:.1} MiB", mib(q.mem_used), mib(q.mem_limit)), q.tasks_used, q.tasks_limit);
+        }
+        out
+    }
+
     fn command(&mut self, client: usize, line: &str) {
         let words: Vec<&str> = line.split_whitespace().collect();
         match words.as_slice() {
@@ -246,6 +312,28 @@ impl Dock {
                 Err(m) => self.reply(client, &format!("error {m}")),
             },
             ["ps"] => self.reply(client, &self.ps()),
+            ["pods"] => self.reply(client, &self.pods()),
+            ["watch"] => {
+                self.watchers.push(client);
+                self.reply(client, "ok watching");
+            }
+            ["spaces"] => self.reply(client, &self.spaces()),
+            ["space", name, mem, tasks] => {
+                let r = (|| {
+                    if *name == "default" || self.spaces.iter().any(|(n, _)| n == name) {
+                        return Err(format!("space {name} exists"));
+                    }
+                    let mem = parse_size(mem).ok_or("bad size")?;
+                    let tasks: u64 = tasks.parse().map_err(|_| "bad task count")?;
+                    let q = self.quota.child(mem, tasks, 2 * tasks).map_err(|e| format!("quota: {e:?}"))?;
+                    self.spaces.push((String::from(*name), q));
+                    Ok(())
+                })();
+                match r {
+                    Ok(()) => self.reply(client, &format!("ok space {name}")),
+                    Err(m) => self.reply(client, &format!("error {m}")),
+                }
+            }
             ["stop", key] => match self.find(key) {
                 Some(k) if self.pods[k].state == State::Running => {
                     let _ = self.pods[k].task.kill();
@@ -298,6 +386,7 @@ impl Dock {
                     let _ = p.log.close();
                     p.removed = true;
                     let n = p.name.clone();
+                    self.notify("rm", k);
                     self.reply(client, &format!("ok removed {n}"));
                 }
                 None => self.reply(client, &format!("error no pod {key}")),
@@ -357,11 +446,14 @@ impl Dock {
                 },
                 None => self.reply(client, &format!("error no pod {key}")),
             },
-            _ => self.reply(client, "error commands: run, ps, stop, wait, commit, push, logs, rm, build, write, ls, cat"),
+            _ => self.reply(client, "error commands: run, ps, stop, wait, commit, push, logs, rm, build, write, ls, cat, pods, watch, space, spaces"),
         }
     }
 
     fn pod_ended(&mut self, k: usize) {
+        if self.pods[k].removed {
+            return;
+        }
         let code = self.pods[k].task.wait().unwrap_or(-1);
         if self.pods[k].state == State::Running {
             self.pods[k].state = State::Exited(code);
@@ -373,6 +465,7 @@ impl Dock {
         for w in core::mem::take(&mut self.pods[k].waiters) {
             self.reply(w, &msg);
         }
+        self.notify(if msg == "stopped" { "stop" } else { "exit" }, k);
     }
 }
 
@@ -388,6 +481,8 @@ fn main(_arg: usize) -> i64 {
         quota: Quota(quota),
         clients: Vec::new(),
         pods: Vec::new(),
+        watchers: Vec::new(),
+        spaces: Vec::new(),
     };
     if let Some(c) = ns::get("client") {
         d.add_client(Channel(c));

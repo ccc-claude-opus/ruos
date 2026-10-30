@@ -39,7 +39,7 @@ node web/test/boot.mjs           # WASM 開機測試（需先 ./run.sh build was
 ## 測試
 
 `test.sh` 先建置全部平台，再為 QEMU 啟動一個共用的 ruos serve（`build/podsrv.log`），然後每個平台在新磁碟上開機兩次：第一次打 `tests/m3.input`，比對所有 `tests/mN.expect`、`tests/teach.expect` 與 `tests/shell.expect`（ERE，每行一個，三平台共用）加 `tests/mN.<平台>.expect`，並確認沒有 `panic:` 或 `FAILED`；第二次打 `tests/boot2.input`，比對 `tests/boot2.expect`（第一次 commit 的映像與物件要從磁碟回來）。每次開機後檢查 server（`post_checks`：可寫層、`podimg verify snap`），結果加進 log。
-WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、系統圖的 snapshot（shell 的 channel 連到 console、dock、store 與自己檔案系統的 overlay（資料與 control 兩條）），第一次開機時還故意在第 50 個回覆後斷一次 server 連線（`--drop-remote`，要看到 `remote: reconnected`）。shell 印出 `shell: ready` 後，QEMU 平台經 FIFO 從序列埠送入 `tests/m3.input`（太早送會被 OpenSBI 重設 UART 吃掉），WASM 由 `web/test/boot.mjs` 在同一時機送進核心 Worker。
+WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、系統圖的 snapshot（shell 的 channel 連到 console、dock、kube、store 與自己檔案系統的 overlay（資料與 control 兩條）），第一次開機時還故意在第 50 個回覆後斷一次 server 連線（`--drop-remote`，要看到 `remote: reconnected`）。shell 印出 `shell: ready` 後，QEMU 平台經 FIFO 從序列埠送入 `tests/m3.input`（太早送會被 OpenSBI 重設 UART 吃掉），WASM 由 `web/test/boot.mjs` 在同一時機送進核心 Worker。
 自測（`kernel/src/selftest.rs`）：第 10 個 tick 印 `timer: 10 ticks at 100 Hz`，第 30 個 tick 印 `M1 OK`；init 結束（印 `init exited (code)`）且 M1 自測做完才關機。M2–M4 的核心測試在 `apps/ktest`（init 開機時先跑，印 `M2 OK`、`M3 OK`、`M4 OK`；handle 0 = store），之後 init 啟動 console 與 shell，測試腳本打字驗證 shell。新里程碑照這個模式加 `tests/mN*.expect`。
 
 ## 設計（已與使用者確認）
@@ -65,6 +65,15 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   13. 網頁：課程 + 即時系統圖（`kernel_snapshot`）— **完成**
   14. 像一般 OS 一樣用：shell 自己的檔案系統（`root` 映像）、檔案 / 文字 / 系統指令、管線與導向、`save` — **完成**
   15. 「學生能像在 Linux 上一樣練習」（使用者確認的目標）：shell 語言（小 sh）、更多文字指令、↑ ↓ 歷史 — **完成**
+  17. 類 k8s（單機宣告式）：`kube` 服務、Deployment / Space、reconcile、重啟退避 — **完成**（之後：M18 capability 版 Service、設定、probe、滾動更新；M19 多節點、跨架構排程；M20 網頁叢集圖與課程）
+- **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
+
+## kube（M17）
+
+- `services/kube`（init 啟動；名稱空間只有 `dock`（init 經 dock 的 channel 送一端過去而得的新 client）與 `client`；shell 的名稱空間有 `kube`）。協定 `libsys/src/kube.rs`：文字，`apply` 第一行後面接 manifest（`services/kube/src/manifest.rs`，TOML + serde：`kind = "Deployment"|"Space"`、`name`、`space`、`image`、`args`、`replicas`、`restart = always|on-failure|never`、`[resources] mem tasks`、`[labels]`）；`get [pods|deploy|spaces]`、`describe`、`scale`、`delete`、`logs`。狀態只在記憶體（重開機就沒了；M19 搬到 ruos serve 的 KV）。
+- 控制迴圈：每次被叫醒（client、dock 事件、計時）都 `reconcile`：pod 多了就移除最新的、少了就建 `NAME-N`（編號不重用），Pending / BackOff 到時間就 `dock run -d --quiet --name … --label kube=NAME [--space S]`（失敗 = Pending + 原因，例如 `worker: QuotaExceeded`，退避後重試）。pod 結束（dock 的 `watch` 事件，或每 2 s `pods` 全表比對）→ 依 restart 政策 BackOff（1 s 起加倍到 16 s，跑滿 10 s 就重設）或 Done。結束的 pod 留在 dock 裡（`logs` 看得到），重啟前才 `rm`。Deployment 的範本變了 → 全部 pod 換掉（Recreate）。
+- dock 新增：`run --label K=V --space S --quiet`（輸出只留給 `logs`，不印到主控台）、`pods`（給程式讀的一行一個）、`watch`（之後每個 pod 的 `event start|exit|stop|rm ID NAME [CODE]`）、`space NAME SIZE TASKS` / `spaces`（Space = dock quota 下的子 quota，pod 的 quota 再從它分出來）。
+- `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）
 

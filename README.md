@@ -198,7 +198,34 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `dock build` | `dock build POD PODFILE` | 依 pod 裡的 Podfile 建新映像 |
 | `dock push` | `dock push IMAGE` | 把映像推到 registry（ruos serve） |
 
-指令都是 shell 內建的（Rust）。`grep`、`sed` 比對一般文字（`grep` 認得 `^`、`$`），不是正規表示式。`run`、`dock` 與 `/bin` 的程式直接寫主控台，不能接管線。
+### 宣告式 pod（`kube`，類似 Kubernetes）
+
+寫下「想要的狀態」（TOML manifest），kube 會一直比對 dock 回報的實際狀態，並把它修正過來：pod 少了就補、多了就移除、結束了就依重啟政策重啟（等待時間 1 s 起加倍，最多 16 s）。範例在 `/home/kube`。
+
+| 指令 | 用法 | 說明 |
+|---|---|---|
+| `kube apply` | `kube apply FILE...` | 建立或更新 Deployment（N 個同映像的 pod）或 Space（一群 pod 共用的 quota）；pod 範本變了就全部換掉 |
+| `kube get` | `kube get [pods\|deploy\|spaces]` | 列表（READY、STATUS、RESTARTS、AGE） |
+| `kube describe` | `kube describe NAME` | Deployment 的設定、每個 pod 的狀態與最近的事件 |
+| `kube scale` | `kube scale NAME N` | 改 replicas |
+| `kube delete` | `kube delete NAME` | 刪掉 Deployment 與它的 pod |
+| `kube logs` | `kube logs POD` | pod 的輸出 |
+
+```toml
+kind = "Deployment"
+name = "web"
+image = "worker"
+replicas = 2
+restart = "always"   # always | on-failure | never
+space = "small"      # 選填：先 apply 一個 kind = "Space" 的 manifest
+[resources]
+mem = "8M"
+tasks = 2
+[labels]
+app = "web"
+```
+
+指令都是 shell 內建的（Rust）；`kube` 的輸出可以接管線（`kube get pods | grep web`）。`grep`、`sed` 比對一般文字（`grep` 認得 `^`、`$`），不是正規表示式。`run`、`dock` 與 `/bin` 的程式直接寫主控台，不能接管線。
 
 ## 設計
 
@@ -220,7 +247,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `abi/` | 系統呼叫號碼、錯誤碼、rights（核心與使用者空間共用） |
 | `libsys/` | 使用者空間函式庫：IPC、名稱空間、各服務的 client、映像 |
 | `objstore/` | 物件庫格式與 pack（OS 與主機共用） |
-| `services/` | init、console、shell、store、overlay、dock、blk、net、wasmrt |
+| `services/` | init、console、shell、store、overlay、dock、kube、blk、net、wasmrt |
 | `apps/` | snoop、hello、writer、hog、bench、ktest 等 |
 | `podimg/` | 主機工具：建映像 |
 | `ruos/` | 發布的套件：`ruos` 指令（伺服器：registry + 可寫層 + 磁碟 + 網頁；開瀏覽器版、開 QEMU），發布時內含預先建好的系統 |
