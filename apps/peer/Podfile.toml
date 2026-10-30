@@ -1,0 +1,5 @@
+name = "peer"
+entry = "/bin/peer"
+
+[programs]
+"/bin/peer" = "peer"

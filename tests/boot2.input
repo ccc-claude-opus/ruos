@@ -1,0 +1,5 @@
+images
+dock run snap
+dock run greeter
+cat /home/note.txt | wc
+exit

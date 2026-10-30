@@ -1,0 +1,5 @@
+name = "shell"
+entry = "/bin/shell"
+
+[programs]
+"/bin/shell" = "shell"

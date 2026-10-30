@@ -1,0 +1,9 @@
+^store: disk 16384 KiB, boot 2, [1-9][0-9]* objects and [0-9]+ refs from earlier boots$
+^snap:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$
+^(/[^ ]* )?\$ dock run snap$
+^writer: no /etc/motd$
+^writer: count 2$
+^\[snap-1 exited with 0\]$
+^init exited \(0\)$
+^writer: motd: Hello from dock build$
+^      2       2      12$

@@ -1,0 +1,6 @@
+^store: disk 16384 KiB, boot 1, 0 objects and 0 refs from earlier boots$
+^store: [0-9]+ objects, [0-9]+ images, hashes verified; writable layers on the server$
+^pushed snap:latest: [0-9]+ objects$
+^server: writable layers .*$
+^server: (s[0-9-]+|w-[0-9a-f]+)/b1-pod[0-9]+/files/data/count = 2$
+^verified snap:latest [0-9a-f]{12}: [0-9]+ objects, riscv64, aarch64, wasm32$

@@ -1,0 +1,5 @@
+name = "dock"
+entry = "/bin/dock"
+
+[programs]
+"/bin/dock" = "dock"

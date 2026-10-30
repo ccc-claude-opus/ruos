@@ -1,0 +1,8 @@
+name = "writer"
+entry = "/bin/writer"
+
+[programs]
+"/bin/writer" = "writer"
+
+[files]
+"/etc/motd" = "motd.txt"

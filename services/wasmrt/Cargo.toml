@@ -1,0 +1,15 @@
+[package]
+name = "wasmrt"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "wasmrt"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+spinning_top = "0.3"
+wasmparser = { version = "0.262", default-features = false, features = ["validate", "features", "prefer-btree-collections"] }

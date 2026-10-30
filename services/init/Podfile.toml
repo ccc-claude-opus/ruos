@@ -1,0 +1,5 @@
+name = "init"
+entry = "/bin/init"
+
+[programs]
+"/bin/init" = "init"

@@ -1,0 +1,25 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+description = "ruos capability microkernel (riscv64, aarch64, wasm32)"
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true
+
+[dependencies]
+abi = { path = "../abi" }
+fdt = "0.1.5"
+talc = { version = "5.1", default-features = false }
+lock_api = "0.4"
+rand_chacha = { version = "0.9", default-features = false }

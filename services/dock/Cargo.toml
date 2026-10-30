@@ -1,0 +1,14 @@
+[package]
+name = "dock"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "dock"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+objstore = { path = "../../objstore" }

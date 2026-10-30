@@ -1,0 +1,19 @@
+^(/[^ ]* )?\$ handles$
+^#   TYPE     RIGHTS  NAME$
+^1   channel  dtwrWm  console$
+^(/[^ ]* )?\$ ns$
+^console    handle 1$
+^snoop: my names: \(none\)$
+^snoop: handles 0\.\.1023 tried, 0 are mine$
+^snoop: no store: I cannot see a single image$
+^snoop: my names: console, store$
+^snoop: handles 0\.\.1023 tried, 2 are mine$
+^snoop: the store lists [0-9]+ images$
+^snoop: written through my console capability$
+^run: the shell has no nosuch$
+^hello index [0-9a-f]{12}$
+^  (riscv64|aarch64|wasm32) +manifest [0-9a-f]{12}  entry /bin/hello$
+^dir +0 [0-9a-f]{12}  etc$
+^file +17 [0-9a-f]{12}  motd$
+^Welcome to ruos\.$
+^file +2 +count$

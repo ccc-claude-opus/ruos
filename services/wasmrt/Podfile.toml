@@ -1,0 +1,5 @@
+name = "wasmrt"
+entry = "/bin/wasmrt"
+
+[programs]
+"/bin/wasmrt" = "wasmrt"

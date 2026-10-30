@@ -1,0 +1,5 @@
+name = "overlay"
+entry = "/bin/overlay"
+
+[programs]
+"/bin/overlay" = "overlay"

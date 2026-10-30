@@ -1,0 +1,12 @@
+^task: started init \(task 1\)$
+^ktest: hello from user mode \((riscv64|aarch64|wasm32)\)$
+^ktest: handles ok \(dup, info, close, bad handle\)$
+^ktest: thread says hi \(arg 42\)$
+^ktest: thread joined \(exit 7\)$
+^ktest: slept [0-9]+ ms$
+^ktest: preemption ok$
+^ktest: hello exited with 0$
+^fault: task [0-9]+ \(fault\) .*: killed$
+^ktest: fault was killed$
+^M2 OK$
+^init exited \(0\)$

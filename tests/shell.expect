@@ -1,0 +1,53 @@
+^(/[^ ]* )?\$ pwd$
+^/home$
+^README\.txt$
+^poem\.txt$
+^      2       9      40$
+^hello$
+^world$
+^the sky is wide$
+^the sea is wide$
+^4$
+^/home/a$
+^  b/$
+^    n2\.txt$
+^-        12  n2\.txt$
+^note\.txt$
+^/etc$
+^20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} UTC$
+^up [0-9]+h [0-9]+m [0-9]+s$
+^hello: hi from a pod \([a-z0-9]+\); names: console, exec:[0-9]+$
+^nosuch: unknown command \(type help\)$
+^saved into root:latest [0-9a-f]{12} \(the next boot starts with these files\)$
+^hello world not \$X$
+^42$
+^files: 4$
+^== README\.txt$
+^== note\.txt$
+^== poem\.txt$
+^found$
+^no whale$
+^status 1$
+^poem exists$
+^      1 capability$
+^      2 sea$
+^      1 sky$
+^      1 that$
+^HELLO$
+^the ocean is wide$
+^3 2 1 $
+^a=1$
+^b=2$
+^1 is odd$
+^4 is even$
+^counted to 4$
+^> echo line \$i$
+^line 1$
+^line 2$
+^c$
+^/home/README\.txt$
+^/home/poem\.txt$
+^ls: shell built-in$
+^/bin/hello$
+^nosuchcmd: not found$
+^up-arrow again$

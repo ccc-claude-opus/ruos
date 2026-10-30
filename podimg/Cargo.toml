@@ -1,0 +1,9 @@
+[package]
+name = "podimg"
+version = "0.1.0"
+edition = "2024"
+description = "ruos image builder: Podfile.toml -> multi-architecture images in a content-addressed store"
+
+[dependencies]
+objstore = { path = "../objstore" }
+ureq = { version = "3", default-features = false }

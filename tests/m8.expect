@@ -1,0 +1,7 @@
+^ktest: smp: 4 threads ran [0-9]+\.[0-9]x faster than one$
+^M8 OK$
+^(/[^ ]* )?\$ dock run hello-wasm$
+^hello: hi from a pod \(wasm32\); names: console, store, fs, log, exec:[0-9]+$
+^\[hello-wasm-[0-9]+ exited with 0\]$
+^(/[^ ]* )?\$ dock run --name ww writer-wasm$
+^\[ww exited with 0\]$

@@ -1,0 +1,13 @@
+[package]
+name = "libsys"
+version = "0.1.0"
+edition = "2024"
+description = "ruos user-space system library"
+
+[dependencies]
+abi = { path = "../abi" }
+objstore = { path = "../objstore" }
+talc = { version = "5.1", default-features = false }
+spinning_top = "0.3"
+embedded-websocket = { version = "0.9", default-features = false }
+rand_core = { version = "0.6", default-features = false }

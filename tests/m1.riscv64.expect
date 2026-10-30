@@ -1,0 +1,4 @@
+^paging: on \(Sv39, [0-9]+-bit ASIDs,
+^trap: stvec at 0xffffffff8
+^trap: breakpoint handled \(1 trap\)$
+^irq: PLIC at 0xc000000, context [0-9]+, uart irq 10$

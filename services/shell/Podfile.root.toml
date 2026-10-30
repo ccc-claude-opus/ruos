@@ -1,0 +1,16 @@
+# root: the shell's file system. Each boot puts its own writable layer on
+# top (b{boot}-shell); `save` commits that layer back into this image.
+name = "root"
+entry = "/bin/shell"
+
+[programs]
+"/bin/shell" = "shell"
+"/bin/hello" = "hello"
+"/bin/snoop" = "snoop"
+
+[files]
+"/etc/motd" = "root/motd.txt"
+"/home/README.txt" = "root/README.txt"
+"/home/poem.txt" = "root/poem.txt"
+"/home/count.sh" = "root/count.sh"
+"/tmp/.ruos-dir" = "root/empty"

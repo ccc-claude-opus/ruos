@@ -1,0 +1,14 @@
+[package]
+name = "overlay"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "overlay"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+objstore = { path = "../../objstore" }

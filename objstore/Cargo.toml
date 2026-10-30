@@ -1,0 +1,10 @@
+[package]
+name = "objstore"
+version = "0.1.0"
+edition = "2024"
+description = "ruos content-addressed object store: BLAKE3, trees, manifests, image indexes, packs"
+
+[dependencies]
+blake3 = { version = "1.8", default-features = false, features = ["pure"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }

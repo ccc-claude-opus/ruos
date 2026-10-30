@@ -1,0 +1,89 @@
+echo hello world
+echo 中文X字
+images
+run hello
+mem
+nope
+handles
+ns
+run snoop
+run snoop console store
+run snoop nosuch
+image hello
+ls hello:
+ls hello:/etc
+cat hello:/etc/motd
+pwd
+ls
+cat poem.txt | grep sea | wc
+echo hello > note.txt
+echo world >> note.txt
+cat note.txt
+cat < poem.txt | grep wide | sort -r
+grep -c the poem.txt
+mkdir -p a/b
+cp note.txt a/b
+mv a/b/note.txt a/b/n2.txt
+tree a
+ls -l a/b
+rm -r a
+ls
+cd /etc
+pwd
+cd
+date
+uptime
+hello
+!1
+nosuch > x.txt
+save
+X=world
+echo "hello $X" 'not $X'
+echo $((6 * 7))
+echo "files: $(ls | wc -l)"
+ls *.txt
+for f in *.txt; do echo "== $f"; done
+grep sea poem.txt && echo found
+grep whale poem.txt || echo "no whale"
+false; echo "status $?"
+[ -f poem.txt ] && echo "poem exists"
+cat poem.txt | cut -d ' ' -f 2 | sort | uniq -c
+echo hello | tr a-z A-Z
+sed 's/sea/ocean/g' poem.txt | head -n 1
+seq 3 | tac | tr '\n' ' '; echo
+printf "%s=%d\n" a 1 b 2
+sh count.sh 4
+for i in 1 2
+do
+echo line $i
+done
+basename /a/b/c.txt .txt
+find / -name "*.txt"
+which ls hello nosuchcmd
+echo up-arrow
+[A again
+dock run hello
+dock run -d --name h1 --mem 4M hog
+sleep 0.5
+dock ps
+dock stop h1
+dock ps
+dock run nosuch
+dock run --name w writer
+dock commit w snap
+dock run snap
+dock push snap
+dock logs w
+dock write w /src/motd.txt Hello from dock build
+dock write w /src/Podfile.toml name = "greeter"\nfrom = "writer"\n[files]\n"/etc/motd" = "/src/motd.txt"
+dock build w /src/Podfile.toml
+dock run greeter
+dock ls w /data
+dock cat w /data/count
+dock rm w
+dock run hello-wasm
+dock run --name ww writer-wasm
+dock run bench
+dock run bench-wasm
+dock run ktest-wasm
+exit

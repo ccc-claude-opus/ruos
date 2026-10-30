@@ -1,0 +1,5 @@
+name = "bench"
+entry = "/bin/bench"
+
+[programs]
+"/bin/bench" = "bench"

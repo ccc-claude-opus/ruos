@@ -1,0 +1,11 @@
+^(/[^ ]* )?\$ dock run --name w writer$
+^writer: motd: Welcome to ruos\.$
+^writer: count 1$
+^writer: / has bin, data, etc; /etc has 0 entries$
+^\[w exited with 0\]$
+^(/[^ ]* )?\$ dock commit w snap$
+^committed snap:latest [0-9a-f]{12} \(2 files, 1 removed\)$
+^writer: no /etc/motd$
+^writer: count 2$
+^\[snap-[0-9]+ exited with 0\]$
+^(/[^ ]* )?\$ dock push snap$

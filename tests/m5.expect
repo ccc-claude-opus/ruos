@@ -1,0 +1,13 @@
+^task: root quota [0-9]+ MiB$
+^hello: hi from a pod \([a-z0-9]+\); names: gift$
+^(/[^ ]* )?\$ dock run hello$
+^hello: hi from a pod \([a-z0-9]+\); names: console, store, fs, log, exec:[0-9]+$
+^\[hello-1 exited with 0\]$
+^hog: got [0-9]+ MiB, then QuotaExceeded$
+^started h1 \(pod 2\)$
+^ID  NAME      IMAGE     STATUS      MEMORY          TASKS$
+^1   hello-1   hello     exited 0    0\.0/32\.0 MiB    0/8$
+^2   h1        hog       running     [0-9.]+/4\.0 MiB +1/8$
+^stopped h1$
+^2   h1        hog       stopped     0\.0/4\.0 MiB     0/8$
+^dock: no image nosuch$

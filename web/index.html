@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ruos 教學作業系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <strong>ruos</strong>
+  <span class="tagline">能力式微核心 · pod</span>
+  <span id="status">開機中…</span>
+  <button id="reboot">重新開機</button>
+</header>
+<main>
+  <section class="left">
+    <pre id="term" aria-label="終端機" tabindex="0"></pre>
+  </section>
+  <section class="right">
+    <nav class="tabs" role="tablist">
+      <button role="tab" id="tab-lessons" aria-selected="true" aria-controls="lessons">課程</button>
+      <button role="tab" id="tab-system" aria-selected="false" aria-controls="system">系統</button>
+    </nav>
+    <div id="lessons" role="tabpanel" aria-labelledby="tab-lessons" class="panel"></div>
+    <div id="system" role="tabpanel" aria-labelledby="tab-system" class="panel" hidden></div>
+  </section>
+</main>
+<textarea id="kbd" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="鍵盤輸入"></textarea>
+<script type="module" src="main.js"></script>
+</body>
+</html>

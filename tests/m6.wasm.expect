@@ -1,0 +1,3 @@
+^task: server connection for init \(handle 3\)$
+^remote: connection lost, reconnecting$
+^remote: reconnected$

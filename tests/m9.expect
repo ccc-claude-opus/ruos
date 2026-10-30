@@ -1,0 +1,9 @@
+^中字$
+^ktest: fp ok \(8 threads, [0-9]+ preemptible iterations each\)$
+^M9 OK$
+^writer: big file ok \(204800 bytes\)$
+^writer: big file from before ok \(204800 bytes\)$
+^\[w\] writer: count 1$
+^built greeter:latest [0-9a-f]{12} \(1 file\(s\) on writer\)$
+^writer: motd: Hello from dock build$
+^removed w$

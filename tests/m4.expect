@@ -1,0 +1,8 @@
+^task: boot pack [0-9]+ KiB$
+^init: started store$
+^store: [0-9]+ objects, [0-9]+ images, hashes verified
+^ktest: store ok \([0-9]+ images, hello is [0-9]+ bytes\)$
+^M4 OK$
+^(/[^ ]* )?\$ images$
+^hello:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$
+^store:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$

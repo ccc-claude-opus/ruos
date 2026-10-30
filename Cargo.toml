@@ -1,0 +1,20 @@
+# Host crates (podsrv) and user programs (abi, libsys, services, apps).
+# `cargo test` / `cargo build` build only the host crates (default-members);
+# run.sh builds the user programs per target. The kernel is its own package.
+[workspace]
+resolver = "3"
+members = [
+    "ruos", "podimg", "abi", "libsys", "objstore", "virtio", "services/blk", "services/net",
+    "services/init", "services/store", "services/console", "services/shell", "services/dock",
+    "services/overlay", "services/wasmrt", "apps/writer",
+    "apps/hello", "apps/snoop", "apps/fault", "apps/ktest", "apps/peer", "apps/hog", "apps/bench",
+]
+default-members = ["ruos", "podimg", "objstore"]
+exclude = ["kernel"]
+
+[profile.release]
+panic = "abort"
+strip = true
+
+[profile.dev]
+panic = "abort"

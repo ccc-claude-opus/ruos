@@ -1,0 +1,6 @@
+name = "ktest-wasm"
+entry = "/bin/ktest"
+arches = "wasm32"
+
+[programs]
+"/bin/ktest" = "ktest"

@@ -1,0 +1,5 @@
+^task: virtio device 2 at 0x[0-9a-f]+, irq [0-9]+ for init$
+^task: virtio device 1 at 0x[0-9a-f]+, irq [0-9]+ for init$
+^blk: virtio-blk, 16384 KiB$
+^net: virtio-net 52:54:00:12:34:56, 10\.0\.2\.15/24 \(smoltcp\)$
+^store: registry at 10\.0\.2\.100:80 over the network$

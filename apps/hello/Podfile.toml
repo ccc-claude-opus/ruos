@@ -1,0 +1,11 @@
+name = "hello"
+entry = "/bin/hello"
+
+[programs]
+"/bin/hello" = "hello"
+
+[files]
+"/etc/motd" = "motd.txt"
+
+[env]
+GREETING = "hello from a pod"

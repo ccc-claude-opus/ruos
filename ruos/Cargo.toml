@@ -1,0 +1,17 @@
+[package]
+name = "ruos"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/ccc-claude-opus/ruos"
+description = "A capability microkernel teaching OS with Docker-like pods, in the browser (WebAssembly) or QEMU (RISC-V, ARM)"
+readme = "README.md"
+keywords = ["os", "kernel", "capability", "wasm", "education"]
+categories = ["command-line-utilities", "wasm"]
+include = ["src/**", "build.rs", "assets/**", "Cargo.toml", "README.md", "LICENSE"]
+
+[dependencies]
+blake3 = "1.8"
+tiny_http = "0.12"
+tungstenite = "0.30"

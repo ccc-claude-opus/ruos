@@ -1,0 +1,10 @@
+^ruos [0-9.]+ \((riscv64|aarch64|wasm32)\)$
+^dtb: model ".+", [0-9]+ bytes at 0x[0-9a-f]+$
+^memory: 0x[0-9a-f]+\.\.0x[0-9a-f]+ \([0-9]+ MiB\)$
+^console: .+ at 0x[0-9a-f]+$
+^paging: 
+^trap: 
+^irq: 
+^timer: [0-9]+ Hz clock, 100 ticks per second$
+^timer: 10 ticks at 100 Hz \([0-9]+ ms\)$
+^M1 OK$

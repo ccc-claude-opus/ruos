@@ -1,0 +1,5 @@
+name = "store"
+entry = "/bin/store"
+
+[programs]
+"/bin/store" = "store"

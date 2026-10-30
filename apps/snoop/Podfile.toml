@@ -1,0 +1,6 @@
+# snoop: what a program can reach is exactly what it was given.
+name = "snoop"
+entry = "/bin/snoop"
+
+[programs]
+"/bin/snoop" = "snoop"

@@ -1,0 +1,5 @@
+name = "ktest"
+entry = "/bin/ktest"
+
+[programs]
+"/bin/ktest" = "ktest"

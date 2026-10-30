@@ -1,0 +1,14 @@
+[package]
+name = "store"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "store"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+objstore = { path = "../../objstore" }

@@ -1,0 +1,5 @@
+name = "console"
+entry = "/bin/console"
+
+[programs]
+"/bin/console" = "console"

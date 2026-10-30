@@ -1,0 +1,1 @@
+^fault: task [0-9]+ \(fault\) page fault at 0xffff000040080000, pc 0x[0-9a-f]+: killed$

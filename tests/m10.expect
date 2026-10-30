@@ -1,0 +1,6 @@
+^bench: system call [0-9]+ ns$
+^bench: channel round trip, two threads [0-9]+ us$
+^bench: channel round trip, two tasks [0-9]+ us$
+^bench: compute [0-9]+ K iterations/s \(wasm32\)$
+^\[bench-wasm-[0-9]+ exited with 0\]$
+^\[ktest-wasm-[0-9]+ exited with 0\]$

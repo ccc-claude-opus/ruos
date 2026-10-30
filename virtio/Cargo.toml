@@ -1,0 +1,10 @@
+[package]
+name = "virtio"
+version = "0.1.0"
+edition = "2024"
+description = "ruos glue for virtio-drivers: the Hal (DMA memory objects) and MMIO transports from Mmio handles"
+
+[dependencies]
+libsys = { path = "../libsys" }
+virtio-drivers = { version = "0.13", default-features = false, features = ["alloc"] }
+spinning_top = "0.3"
