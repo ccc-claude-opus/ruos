@@ -43,8 +43,9 @@ pod（映像 + quota + 名稱空間 + 可寫層）
   dock ps | stop POD | logs POD | rm POD | ls POD [DIR] | cat POD FILE
   dock write POD FILE TEXT | commit POD IMAGE | build POD PODFILE | push IMAGE
 kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
-  kube apply FILE...   kube get [pods|deploy|spaces]   kube describe NAME
-  kube scale NAME N    kube delete NAME   kube logs POD
+  kube apply FILE...   kube get [pods|deploy|svc|configs|spaces]   kube describe NAME
+  kube scale NAME N    kube delete [config] NAME   kube logs POD
+  kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
 ";
 
 /// Flags (`-x`, `-n N`) and the other arguments.
@@ -726,6 +727,25 @@ impl Sh {
                 None => Ok(r + "\n"),
             }
         };
+        if argv.first().map(String::as_str) == Some("call") {
+            let [_, service, words @ ..] = argv else { return Err(String::from("kube call SERVICE TEXT")) };
+            let (mine, theirs) = Channel::create().map_err(err("kube"))?;
+            let r = k.request_with(&format!("connect {service}"), &[theirs.0]).map_err(err("kube"))?;
+            if let Some(m) = r.strip_prefix("error ") {
+                return Err(format!("kube: {m}"));
+            }
+            let msg: Vec<&str> = words.iter().map(String::as_str).collect();
+            mine.write(msg.join(" ").as_bytes(), &[]).map_err(err("kube call"))?;
+            let got = libsys::wait_one(mine.0, libsys::signal::READABLE | libsys::signal::PEER_CLOSED, 6_000_000_000);
+            let mut buf = alloc::vec![0u8; 4096];
+            let r = got.and_then(|_| mine.read(&mut buf, &mut []));
+            let _ = mine.close();
+            return match r {
+                Ok((n, _)) => Ok(format!("{}\n", text(&buf[..n])).into_bytes()),
+                Err(libsys::Error::TimedOut) => Err(format!("kube call: no answer from {service}")),
+                Err(_) => Err(format!("kube call: no ready pod of {service}")),
+            };
+        }
         if argv.first().map(String::as_str) != Some("apply") {
             let words: Vec<&str> = argv.iter().map(String::as_str).collect();
             return ask(&words.join(" ")).map(String::into_bytes);

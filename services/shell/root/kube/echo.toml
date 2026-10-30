@@ -1,0 +1,8 @@
+# A service: two echo pods are the service "echo". Pods that list it in
+# `uses` get svc:echo; kube hands each connection to a ready pod in turn.
+# kube call echo hi
+kind = "Deployment"
+name = "echo"
+image = "echo"
+replicas = 2
+serves = "echo"

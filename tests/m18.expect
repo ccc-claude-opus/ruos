@@ -1,0 +1,22 @@
+^deployment/echo created$
+^config/greeting created$
+^deployment/front created$
+^echo-[12]: hi$
+^SERVICE +READY +USERS +WAITING +CONNECTIONS$
+^echo +2/2 +1 +0 +[0-9]+$
+^\[front-1\] worker: MESSAGE=hello v1$
+^\[front-1\] worker: /etc/message\.txt: greeting v1 \(a file from the Config\)$
+^\[front-1\] worker: echo said: echo-[12]: hello from front-1$
+^config/greeting configured$
+^deployment/front rolling out revision 2$
+^deployment/front revision 2: complete \(1/1 ready\)$
+^front-2 +1/1 +Running +0 +2 +[0-9]+s$
+^\[front-2\] worker: MESSAGE=hello v2$
+^1 +kube-front:r1$
+^2 +kube-front:r2$
+^deployment/front rolling back: revision 3 = revision 1$
+^deployment/stuck created$
+^  [0-9]+s +Liveness probe failed: stuck-1 did not answer for 7s$
+^  [0-9]+s +Restarted pod stuck-1 \(1\)$
+^deployment/echo deleted$
+^config/greeting deleted$

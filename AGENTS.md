@@ -65,7 +65,8 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   13. 網頁：課程 + 即時系統圖（`kernel_snapshot`）— **完成**
   14. 像一般 OS 一樣用：shell 自己的檔案系統（`root` 映像）、檔案 / 文字 / 系統指令、管線與導向、`save` — **完成**
   15. 「學生能像在 Linux 上一樣練習」（使用者確認的目標）：shell 語言（小 sh）、更多文字指令、↑ ↓ 歷史 — **完成**
-  17. 類 k8s（單機宣告式）：`kube` 服務、Deployment / Space、reconcile、重啟退避 — **完成**（之後：M18 capability 版 Service、設定、probe、滾動更新；M19 多節點、跨架構排程；M20 網頁叢集圖與課程）
+  17. 類 k8s（單機宣告式）：`kube` 服務、Deployment / Space、reconcile、重啟退避 — **完成**
+  18. capability 版 Service、Config、probe、滾動更新 — **完成**（之後：M19 多節點、跨架構排程；M20 網頁叢集圖與課程）
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -73,6 +74,13 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
 - `services/kube`（init 啟動；名稱空間只有 `dock`（init 經 dock 的 channel 送一端過去而得的新 client）與 `client`；shell 的名稱空間有 `kube`）。協定 `libsys/src/kube.rs`：文字，`apply` 第一行後面接 manifest（`services/kube/src/manifest.rs`，TOML + serde：`kind = "Deployment"|"Space"`、`name`、`space`、`image`、`args`、`replicas`、`restart = always|on-failure|never`、`[resources] mem tasks`、`[labels]`）；`get [pods|deploy|spaces]`、`describe`、`scale`、`delete`、`logs`。狀態只在記憶體（重開機就沒了；M19 搬到 ruos serve 的 KV）。
 - 控制迴圈：每次被叫醒（client、dock 事件、計時）都 `reconcile`：pod 多了就移除最新的、少了就建 `NAME-N`（編號不重用），Pending / BackOff 到時間就 `dock run -d --quiet --name … --label kube=NAME [--space S]`（失敗 = Pending + 原因，例如 `worker: QuotaExceeded`，退避後重試）。pod 結束（dock 的 `watch` 事件，或每 2 s `pods` 全表比對）→ 依 restart 政策 BackOff（1 s 起加倍到 16 s，跑滿 10 s 就重設）或 Done。結束的 pod 留在 dock 裡（`logs` 看得到），重啟前才 `rm`。Deployment 的範本變了 → 全部 pod 換掉（Recreate）。
 - dock 新增：`run --label K=V --space S --quiet`（輸出只留給 `logs`，不印到主控台）、`pods`（給程式讀的一行一個）、`watch`（之後每個 pod 的 `event start|exit|stop|rm ID NAME [CODE]`）、`space NAME SIZE TASKS` / `spaces`（Space = dock quota 下的子 quota，pod 的 quota 再從它分出來）。
+- **M18**：
+  - Service（`libsys/src/svc.rs`）：`serves = "X"` 的 pod 名稱空間有 `listen`，`uses = ["X"]` 的有 `svc:X`；沒有位址。呼叫端建一對 channel，經 `svc:X` 送 `connect` + 一端，kube 依序（round robin）交給一個 ready 的 X pod（`listen` 上的 `conn` + handle），之後兩個 pod 直接談，kube 不在資料路徑上。沒有 ready 的 pod 就等 5 s，再關掉（呼叫端看到 PEER_CLOSED）。shell 的 `kube call SVC TEXT`：shell 以 `connect SVC` + handle 經 kube client channel 送。
+  - probe：serving pod 在 `listen` 上說 `ready` 才算 ready；kube 每 2 s 送 `ping`（`Listener::poll` 回 `pong`），5 s 沒回 = not ready（不分流量），7 s = liveness 失敗 → `dock stop` → 依政策重啟。不 serve 的 pod 跑滿 1 s 就算 ready。
+  - Config（`kind = "Config"`、`[files]` 路徑 = 文字、`[env]`）：用它的 Deployment 跑 `kube-NAME:rREV`（`libsys::image::derive`：原映像 + 檔案 layer + env；kube 名稱空間有 `store`）。Config 改了 → 用它的 Deployment 出新 revision。
+  - 滾動更新：範本或 Config 變了 = 新 revision（最多留 10 個）；pod 記自己的 rev。maxSurge 1 / maxUnavailable 0：先多建一個新 pod，ready 的數量超過 replicas 就移除一個舊的；沒 ready 的舊 pod 直接移除。`kube rollout status|history|undo`（undo = 以前一個 revision 的範本出新 revision）。
+  - dock：`run --handle NAME`（依序對應訊息帶的 handle，放進 pod 名稱空間；只有 handle、沒有文字的訊息才是「新 client」）；pod 的環境有 `POD=名稱`。
+  - `apps/echo`（serve：回 `POD: 訊息`；`echo hang N` N 秒後不再回應）；worker 會印 `MESSAGE` 與 `/etc/message.txt`，每 3 s 呼叫每個 `svc:`。範例 `echo.toml`、`front.toml`、`greeting.toml`、`stuck.toml`；測試 `tests/m18.expect`。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）

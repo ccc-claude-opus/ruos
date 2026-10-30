@@ -1,7 +1,9 @@
 //! The dock service's protocol: a request is a text command line, the
 //! reply is text. Commands:
-//!   run [-d] [--name N] [--mem SIZE] [--tasks N] [--label K=V]... [--space S] [--quiet] IMAGE [ARGS]
-//!                                                       → `ok ID NAME`
+//!   run [-d] [--name N] [--mem SIZE] [--tasks N] [--label K=V]... [--space S] [--quiet]
+//!       [--handle NAME]... IMAGE [ARGS]                 → `ok ID NAME`
+//!       (each --handle names the next handle sent with the command; the
+//!       pod's environment has POD=NAME)
 //!   ps                                                  → a table
 //!   pods                    for programs                → `ID NAME running|exited:CODE|stopped K=V,…|-` lines
 //!   watch                   then events, one a message  → `ok watching`, `event start|exit|stop|rm ID NAME [CODE]`
@@ -27,7 +29,12 @@ pub struct Dock(pub Channel);
 
 impl Dock {
     pub fn request(&self, cmd: &str) -> Result<String> {
-        self.0.write(cmd.as_bytes(), &[])?;
+        self.request_with(cmd, &[])
+    }
+
+    /// A command with handles (they move to dock).
+    pub fn request_with(&self, cmd: &str, handles: &[crate::Handle]) -> Result<String> {
+        self.0.write(cmd.as_bytes(), handles)?;
         let mut buf = alloc::vec![0u8; crate::MAX_MSG_BYTES];
         let (n, _) = self.0.recv(&mut buf, &mut [])?;
         buf.truncate(n);

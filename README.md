@@ -205,11 +205,15 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | 指令 | 用法 | 說明 |
 |---|---|---|
 | `kube apply` | `kube apply FILE...` | 建立或更新 Deployment（N 個同映像的 pod）或 Space（一群 pod 共用的 quota）；pod 範本變了就全部換掉 |
-| `kube get` | `kube get [pods\|deploy\|spaces]` | 列表（READY、STATUS、RESTARTS、AGE） |
+| `kube get` | `kube get [pods\|deploy\|svc\|configs\|spaces]` | 列表（READY、STATUS、RESTARTS、REV、AGE） |
 | `kube describe` | `kube describe NAME` | Deployment 的設定、每個 pod 的狀態與最近的事件 |
 | `kube scale` | `kube scale NAME N` | 改 replicas |
 | `kube delete` | `kube delete NAME` | 刪掉 Deployment 與它的 pod |
 | `kube logs` | `kube logs POD` | pod 的輸出 |
+| `kube rollout` | `kube rollout status\|history\|undo NAME` | 滾動更新的進度、歷史、退回上一版 |
+| `kube call` | `kube call SERVICE TEXT` | 經 service 交給一個 ready 的 pod，印出它的回答 |
+
+**Service 沒有位址**：`serves = "echo"` 的 pod 是 service echo；`uses = ["echo"]` 的 pod 名稱空間裡才有 `svc:echo`，沒列的就連不到（預設全部拒絕）。連線時 kube 把一條新 channel 的一端交給一個 ready 的 pod，之後兩邊直接談。kube 每 2 s ping 一次，不回應的 pod 不再分到連線，7 s 後重啟。**Config**（`kind = "Config"`，`[files]`、`[env]`）疊成映像上的一層；改了 Config 或範本就會滾動更新：先多一個新 pod，它 ready 了再移除一個舊的。
 
 ```toml
 kind = "Deployment"
@@ -218,6 +222,9 @@ image = "worker"
 replicas = 2
 restart = "always"   # always | on-failure | never
 space = "small"      # 選填：先 apply 一個 kind = "Space" 的 manifest
+serves = "echo"      # 選填：這些 pod 是 service echo
+uses = ["echo"]      # 選填：這些 pod 可以呼叫的 service
+config = "greeting"  # 選填：kind = "Config" 的檔案與環境變數
 [resources]
 mem = "8M"
 tasks = 2

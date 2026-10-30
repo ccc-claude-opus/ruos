@@ -1,13 +1,16 @@
 //! Manifests: what `kube apply` is given, one object per file (TOML).
 //!
 //! ```toml
-//! kind = "Deployment"       # or "Space"
+//! kind = "Deployment"       # or "Space", "Config"
 //! name = "web"
 //! space = "demo"            # optional: the Space its pods' quotas come out of
 //! image = "worker"
 //! args = ["5", "1"]         # optional: the program's arguments
 //! replicas = 3              # optional, 1
 //! restart = "always"        # always | on-failure | never
+//! serves = "echo"           # optional: its pods are the service echo (get `listen`)
+//! uses = ["echo"]           # optional: services its pods may call (get `svc:echo`)
+//! config = "greeting"       # optional: a Config's files and env on top of the image
 //!
 //! [resources]               # each pod's quota (a Space: the whole space's)
 //! mem = "8M"
@@ -16,6 +19,8 @@
 //! [labels]
 //! app = "web"
 //! ```
+//!
+//! A Config: `kind = "Config"`, `name`, `[files]` (path = text) and `[env]`.
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -38,6 +43,14 @@ struct Raw {
     resources: Resources,
     #[serde(default)]
     labels: BTreeMap<String, String>,
+    serves: Option<String>,
+    #[serde(default)]
+    uses: Vec<String>,
+    config: Option<String>,
+    #[serde(default)]
+    files: BTreeMap<String, String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -65,11 +78,15 @@ pub struct Template {
     pub tasks: u64,
     /// `key=value`, sorted.
     pub labels: Vec<String>,
+    pub serves: Option<String>,
+    pub uses: Vec<String>,
+    pub config: Option<String>,
 }
 
 pub enum Object {
     Deployment { name: String, replicas: u32, template: Template },
     Space { name: String, mem: String, tasks: u64 },
+    Config { name: String, files: Vec<(String, String)>, env: Vec<(String, String)> },
 }
 
 /// Lowercase letters, digits and `-`, like a k8s name (and short, for the tables).
@@ -96,7 +113,7 @@ pub fn parse(text: &str) -> Result<Object, String> {
             };
             let mem = r.resources.mem.unwrap_or_else(|| String::from("8M"));
             check_size(&mem)?;
-            if let Some(s) = &r.space {
+            for s in r.space.iter().chain(&r.serves).chain(&r.uses).chain(&r.config) {
                 check_name(s)?;
             }
             for k in r.labels.keys() {
@@ -112,6 +129,9 @@ pub fn parse(text: &str) -> Result<Object, String> {
                 mem,
                 tasks: r.resources.tasks.unwrap_or(2),
                 labels: r.labels.iter().map(|(k, v)| format!("{k}={v}")).collect(),
+                serves: r.serves,
+                uses: r.uses,
+                config: r.config,
             };
             Ok(Object::Deployment { name: r.name, replicas: r.replicas.unwrap_or(1), template })
         }
@@ -120,6 +140,12 @@ pub fn parse(text: &str) -> Result<Object, String> {
             check_size(&mem)?;
             Ok(Object::Space { name: r.name, mem, tasks: r.resources.tasks.ok_or("a Space needs resources.tasks")? })
         }
-        k => Err(format!("unknown kind {k:?} (Deployment, Space)")),
+        "Config" => {
+            if let Some(f) = r.files.keys().find(|f| !f.starts_with('/')) {
+                return Err(format!("bad file {f:?} (a path from /)"));
+            }
+            Ok(Object::Config { name: r.name, files: r.files.into_iter().collect(), env: r.env.into_iter().collect() })
+        }
+        k => Err(format!("unknown kind {k:?} (Deployment, Space, Config)")),
     }
 }

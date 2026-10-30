@@ -1,0 +1,7 @@
+# A pod that may call echo (and nothing else), with the Config greeting
+# on top of its image. kube logs front-1 shows both.
+kind = "Deployment"
+name = "front"
+image = "worker"
+uses = ["echo"]
+config = "greeting"

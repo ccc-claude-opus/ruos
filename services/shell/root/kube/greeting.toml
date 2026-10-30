@@ -1,0 +1,10 @@
+# A Config: files and environment for the pods that use it. Change it and
+# apply again: those Deployments roll out a new revision.
+kind = "Config"
+name = "greeting"
+
+[files]
+"/etc/message.txt" = "greeting v1 (a file from the Config)"
+
+[env]
+MESSAGE = "hello v1"

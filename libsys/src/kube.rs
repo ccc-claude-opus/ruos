@@ -6,6 +6,9 @@
 //!   scale NAME N                                           → `deployment/NAME scaled to N`
 //!   delete NAME             the Deployment and its pods    → `deployment/NAME deleted`
 //!   logs POD                what the pod printed           → `[POD] line` lines
+//!   rollout status|history|undo NAME                       → text
+//!   connect SERVICE + a channel end: handed to a ready pod of SERVICE → `ok`
+//!   (get also takes svc and configs; delete config NAME)
 //! Errors are `error MESSAGE`.
 use alloc::string::String;
 
@@ -16,7 +19,11 @@ pub struct Kube(pub Channel);
 
 impl Kube {
     pub fn request(&self, msg: &str) -> Result<String> {
-        self.0.write(msg.as_bytes(), &[])?;
+        self.request_with(msg, &[])
+    }
+
+    pub fn request_with(&self, msg: &str, handles: &[crate::Handle]) -> Result<String> {
+        self.0.write(msg.as_bytes(), handles)?;
         let mut buf = alloc::vec![0u8; crate::MAX_MSG_BYTES];
         let (n, _) = self.0.recv(&mut buf, &mut [])?;
         buf.truncate(n);

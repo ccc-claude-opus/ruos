@@ -154,9 +154,21 @@ impl Dock {
         Ok(format!("ok built {r} {id} {} {from}", files.len()))
     }
 
-    fn run(&mut self, args: &[&str]) -> Result<(usize, bool), String> {
+    /// `handles` came with the command: `--handle NAME` puts the next one in
+    /// the pod's namespace (kube gives pods their `listen` and `svc:NAME`).
+    fn run(&mut self, args: &[&str], handles: &[Handle]) -> Result<(usize, bool), String> {
+        let r = self.run_with(args, handles);
+        if r.is_err() {
+            for h in handles {
+                let _ = h.close();
+            }
+        }
+        r
+    }
+
+    fn run_with(&mut self, args: &[&str], handles: &[Handle]) -> Result<(usize, bool), String> {
         let (mut name, mut mem, mut tasks, mut detach, mut image) = (None, 32 << 20, 8, false, None);
-        let (mut labels, mut quiet, mut space) = (Vec::new(), false, None);
+        let (mut labels, mut quiet, mut space, mut extra) = (Vec::new(), false, None, Vec::new());
         let mut i = 0;
         while i < args.len() {
             let val = || args.get(i + 1).copied().ok_or_else(|| format!("{} needs a value", args[i]));
@@ -188,6 +200,11 @@ impl Dock {
                     i += 1;
                 }
                 "--quiet" => quiet = true,
+                "--handle" => {
+                    let h = *handles.get(extra.len()).ok_or("--handle without a handle")?;
+                    extra.push((val()?, h));
+                    i += 1;
+                }
                 a if a.starts_with('-') => return Err(format!("unknown option {a}")),
                 a => {
                     image = Some(a);
@@ -199,6 +216,9 @@ impl Dock {
         }
         // The rest are the program's arguments (argv[0] is the entry's path).
         let image = image.ok_or("no image")?;
+        if extra.len() != handles.len() {
+            return Err(String::from("more handles than --handle names"));
+        }
         let id = self.pods.len() + 1;
         let name = name.unwrap_or_else(|| format!("{image}-{id}"));
         if self.find(&name).is_some() {
@@ -222,11 +242,15 @@ impl Dock {
         let ons = Namespace::new().add("store", ovs.0.0).add("fs", fs_srv.0).add("control", ctl_srv.0);
         self.store.spawn("overlay", &ons, None).map_err(e("overlay"))?;
         let (log, log_pod) = Channel::create().map_err(e("channel"))?;
-        let ns = Namespace::new().add("console", mine.0).add("store", st.0.0).add("fs", fs.0).add("log", log_pod.0);
+        let mut ns = Namespace::new().add("console", mine.0).add("store", st.0.0).add("fs", fs.0).add("log", log_pod.0);
+        for (n, h) in &extra {
+            ns = ns.add(n, *h);
+        }
         let man = libsys::image::manifest(&self.store, image).ok();
         let entry = man.as_ref().map(|m| m.entry.clone()).unwrap_or_else(|| String::from(image));
         let argv: Vec<&str> = core::iter::once(entry.as_str()).chain(args[i..].iter().copied()).collect();
-        let env = man.map(|m| m.env).unwrap_or_default();
+        let mut env = man.map(|m| m.env).unwrap_or_default();
+        env.push((String::from("POD"), name.clone()));
         let ns = libsys::args::add(ns, &argv, &env).map_err(e("args"))?;
         let task = match self.store.spawn(image, &ns, Some(quota.0)) {
             Ok(t) => t,
@@ -301,10 +325,15 @@ impl Dock {
         out
     }
 
-    fn command(&mut self, client: usize, line: &str) {
+    fn command(&mut self, client: usize, line: &str, handles: &[Handle]) {
         let words: Vec<&str> = line.split_whitespace().collect();
+        if words.first() != Some(&"run") {
+            for h in handles {
+                let _ = h.close();
+            }
+        }
         match words.as_slice() {
-            ["run", args @ ..] => match self.run(args) {
+            ["run", args @ ..] => match self.run(args, handles) {
                 Ok((k, _)) => {
                     let p = &self.pods[k];
                     self.reply(client, &format!("ok {} {}", p.id, p.name));
@@ -500,17 +529,17 @@ fn main(_arg: usize) -> i64 {
         let i = p.key as usize;
         let Some(c) = d.clients[i] else { continue };
         let mut buf = [0u8; 1024];
-        let mut hs = [Handle(0); 1];
+        let mut hs = [Handle(0); libsys::MAX_MSG_HANDLES];
         loop {
             match c.read(&mut buf, &mut hs) {
                 Ok((n, nh)) => {
-                    // A message with a channel: another client.
-                    if nh == 1 {
+                    // Only a channel: another client.
+                    if n == 0 && nh == 1 {
                         d.add_client(Channel(hs[0]));
                         continue;
                     }
                     let line = String::from(core::str::from_utf8(&buf[..n]).unwrap_or(""));
-                    d.command(i, &line);
+                    d.command(i, &line, &hs[..nh]);
                 }
                 Err(Error::ShouldWait) => {
                     let _ = d.port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, i as u64);

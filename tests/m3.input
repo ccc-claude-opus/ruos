@@ -107,4 +107,29 @@ kube delete web
 kube delete flaky
 kube delete crowd
 kube get deploy
+kube apply kube/echo.toml
+kube apply kube/greeting.toml kube/front.toml
+sleep 1
+kube call echo hi
+kube call echo hi
+sleep 3
+kube get svc
+kube logs front-1
+sed 's/v1/v2/' kube/greeting.toml > /tmp/greeting.toml
+kube apply /tmp/greeting.toml
+sleep 3
+kube rollout status front
+kube get pods | grep front
+kube logs front-2
+kube rollout history front
+kube rollout undo front
+kube apply kube/stuck.toml
+sleep 12
+kube describe stuck | grep Liveness
+kube describe stuck | grep Restarted
+kube delete stuck
+kube delete front
+kube delete echo
+kube delete config greeting
+kube get svc
 exit

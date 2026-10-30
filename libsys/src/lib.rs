@@ -29,6 +29,7 @@ pub mod kube;
 pub mod net;
 pub mod ns;
 pub mod store;
+pub mod svc;
 pub mod wire;
 
 pub use ipc::{Channel, Irq, Memory, Mmio, Port, Serial, wait_one};

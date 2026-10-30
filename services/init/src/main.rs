@@ -103,13 +103,15 @@ fn main(_arg: usize) -> i64 {
     let ns = Namespace::new().add("console", c).add("store", s.0.0).add("quota", pods.0).add("client", dock_srv.0);
     let Ok(dock_task) = store.spawn("dock", &ns, None) else { return 1 };
 
-    // kube: Deployments made of dock pods; its one capability is a dock client.
+    // kube: Deployments made of dock pods; it has a dock client and a store client.
     let Ok((kd, kd_srv)) = Channel::create() else { return 1 };
     let Ok((kube, kube_srv)) = Channel::create() else { return 1 };
     if dock.write(b"", &[kd_srv.0]).is_err() {
         return 1;
     }
-    let Ok(kube_task) = store.spawn("kube", &Namespace::new().add("dock", kd.0).add("client", kube_srv.0), None) else { return 1 };
+    let Ok(ks) = store.connect() else { return 1 };
+    let ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("client", kube_srv.0);
+    let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
     let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0);

@@ -277,6 +277,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "echo"
+version = "0.1.0"
+dependencies = [
+ "libsys",
+]
+
+[[package]]
 name = "embedded-websocket"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

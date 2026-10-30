@@ -1,0 +1,7 @@
+# echo that stops answering after 2 s: kube's pings go unanswered, so the
+# pod gets no connections and, after 7 s, is restarted (liveness).
+kind = "Deployment"
+name = "stuck"
+image = "echo"
+args = ["hang", "2"]
+serves = "stuck"

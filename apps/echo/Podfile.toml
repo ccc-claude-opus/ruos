@@ -1,0 +1,6 @@
+# echo: a service pod for kube (a Deployment with serves = "echo").
+name = "echo"
+entry = "/bin/echo"
+
+[programs]
+"/bin/echo" = "echo"
