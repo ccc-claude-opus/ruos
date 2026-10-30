@@ -43,7 +43,7 @@ pod（映像 + quota + 名稱空間 + 可寫層）
   dock ps | stop POD | logs POD | rm POD | ls POD [DIR] | cat POD FILE
   dock write POD FILE TEXT | commit POD IMAGE | build POD PODFILE | push IMAGE
 kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
-  kube apply FILE...   kube get [pods|deploy|svc|configs|spaces]   kube describe NAME
+  kube apply FILE...   kube get [pods|deploy|nodes|svc|configs|spaces]   kube describe NAME
   kube scale NAME N    kube delete [config] NAME   kube logs POD
   kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
 ";
@@ -718,32 +718,32 @@ impl Sh {
 impl Sh {
     /// kube: `apply` sends the files' text; the rest goes as it is.
     fn kube(&self, argv: &[String]) -> Out {
-        let k = self.kube.ok_or("kube: not available")?;
+        let k = self.kube.ok_or("not available")?;
         let ask = |msg: &str| -> Result<String, String> {
-            let r = k.request(msg).map_err(err("kube"))?;
+            let r = k.request(msg).map_err(err("request"))?;
             match r.strip_prefix("error ") {
-                Some(m) => Err(format!("kube: {}", m.trim_end())),
+                Some(m) => Err(String::from(m.trim_end())),
                 None if r.is_empty() || r.ends_with('\n') => Ok(r),
                 None => Ok(r + "\n"),
             }
         };
         if argv.first().map(String::as_str) == Some("call") {
-            let [_, service, words @ ..] = argv else { return Err(String::from("kube call SERVICE TEXT")) };
-            let (mine, theirs) = Channel::create().map_err(err("kube"))?;
-            let r = k.request_with(&format!("connect {service}"), &[theirs.0]).map_err(err("kube"))?;
+            let [_, service, words @ ..] = argv else { return Err(String::from("call SERVICE TEXT")) };
+            let (mine, theirs) = Channel::create().map_err(err("channel"))?;
+            let r = k.request_with(&format!("connect {service}"), &[theirs.0]).map_err(err("request"))?;
             if let Some(m) = r.strip_prefix("error ") {
-                return Err(format!("kube: {m}"));
+                return Err(String::from(m.trim_end()));
             }
             let msg: Vec<&str> = words.iter().map(String::as_str).collect();
-            mine.write(msg.join(" ").as_bytes(), &[]).map_err(err("kube call"))?;
+            mine.write(msg.join(" ").as_bytes(), &[]).map_err(err("call"))?;
             let got = libsys::wait_one(mine.0, libsys::signal::READABLE | libsys::signal::PEER_CLOSED, 6_000_000_000);
             let mut buf = alloc::vec![0u8; 4096];
             let r = got.and_then(|_| mine.read(&mut buf, &mut []));
             let _ = mine.close();
             return match r {
                 Ok((n, _)) => Ok(format!("{}\n", text(&buf[..n])).into_bytes()),
-                Err(libsys::Error::TimedOut) => Err(format!("kube call: no answer from {service}")),
-                Err(_) => Err(format!("kube call: no ready pod of {service}")),
+                Err(libsys::Error::TimedOut) => Err(format!("call: no answer from {service}")),
+                Err(_) => Err(format!("call: no ready pod of {service}")),
             };
         }
         if argv.first().map(String::as_str) != Some("apply") {
@@ -752,7 +752,7 @@ impl Sh {
         }
         let files: Vec<&String> = argv[1..].iter().filter(|a| *a != "-f").collect();
         if files.is_empty() {
-            return Err(String::from("kube apply FILE..."));
+            return Err(String::from("apply FILE..."));
         }
         let mut out = String::new();
         for f in files {

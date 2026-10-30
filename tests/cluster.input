@@ -1,0 +1,16 @@
+sleep 4
+kube get nodes
+kube apply kube/spread.toml
+sleep 3
+kube get pods
+kube apply kube/pinned.toml
+sleep 3
+kube get pods | grep pinned
+kube logs pinned-1
+sleep 30
+kube get nodes
+kube get pods
+kube describe spread | grep gone
+kube delete spread
+kube delete pinned
+exit

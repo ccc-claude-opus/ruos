@@ -64,6 +64,16 @@ pub const OBJ_MEM: u8 = 26;
 
 /// Largest object or file carried in one message.
 pub const MAX_INLINE: usize = 60000;
+/// The cluster's records on the server (kube), forwarded as they are:
+/// [KV_HELLO] → [OK, `MACHINE SESSION NOW_MS`];
+pub const KV_HELLO: u8 = 40;
+/// [KV_LIST, prefix] → [OK, `NOW_MS\n` + per record `KEY VERSION UPDATED_MS LEN\n` + value + `\n`];
+pub const KV_LIST: u8 = 41;
+/// [KV_PUT, key, expect, value] → [OK, `VERSION`] or [FAILED, `conflict`]
+/// (expect: empty = any, 0 = must not exist, else the current version);
+pub const KV_PUT: u8 = 42;
+/// [KV_DEL, key, expect] → [OK] / [NOT_FOUND] / [FAILED, `conflict`].
+pub const KV_DEL: u8 = 43;
 
 #[derive(Clone, Copy)]
 pub struct Store(pub Channel);
@@ -107,6 +117,17 @@ impl Store {
     }
 
     /// How many times this store has booted (0 without a disk).
+    /// A cluster request (KV_*): (status, payload). FAILED with `no server`
+    /// when the machine has no server.
+    pub fn kv(&self, op: u8, fields: &[&[u8]]) -> Result<(u8, Vec<u8>)> {
+        let (mut r, _) = self.request(&encode(op, fields), &mut [])?;
+        if r.is_empty() {
+            return Err(Error::InvalidArgs);
+        }
+        let st = r.remove(0);
+        Ok((st, r))
+    }
+
     pub fn boot(&self) -> Result<u64> {
         self.call(BOOT, &[]).map(|r| text(&r).parse().unwrap_or(0))
     }

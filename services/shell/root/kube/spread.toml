@@ -1,0 +1,10 @@
+# Four pods: the scheduler puts each on the node (machine) with the fewest
+# pods. Open the page again with ?machine=b2 for a second node.
+kind = "Deployment"
+name = "spread"
+image = "worker"
+replicas = 4
+
+[resources]
+mem = "4M"
+tasks = 1

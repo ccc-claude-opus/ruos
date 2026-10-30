@@ -1,10 +1,12 @@
 // WASM boot test: starts the server (ruos serve), checks the page's headers, fetches the
 // kernel over HTTP and boots it in a worker thread (like the browser's kernel
 // Worker). Prints the console, exits with the kernel's shutdown code.
-//   node web/test/boot.mjs [--input FILE] [--machine NAME] [--drop-remote N]
+//   node web/test/boot.mjs [--input FILE] [--machine NAME] [--drop-remote N] [--server URL]
 // FILE (default tests/m3.input) is typed once the shell is up; NAME names
-// the machine's disk on the server; N: the server connection is closed once
-// after N answers (the kernel host reconnects). RUOS (the server binary), KERNEL_WASM override the paths.
+// the machine's disk on the server (and its node in the cluster); N: the
+// server connection is closed once after N answers (the kernel host
+// reconnects); URL: a server that is already running (machines that share
+// it are one cluster), else one is started here. RUOS (the server binary), KERNEL_WASM override the paths.
 import { spawn, execFileSync } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +26,7 @@ const arg = (name, dflt) => {
 const input = arg('--input', path.join(root, 'tests/m3.input'));
 const machine = arg('--machine', 'node');
 const dropRemoteAfter = Number(arg('--drop-remote', 0));
+const serverUrl = arg('--server', null);
 
 const fail = (msg) => {
   console.error(`boot.mjs: ${msg}`);
@@ -31,10 +34,12 @@ const fail = (msg) => {
   process.exit(1);
 };
 
-const srv = spawn(server, ['serve', '--port', '0', '--web', path.join(root, 'web'), '--kernel', kernel, '--store', store], {
-  stdio: ['ignore', 'pipe', 'inherit'],
-});
-const base = await new Promise((resolve, reject) => {
+const srv = serverUrl
+  ? null
+  : spawn(server, ['serve', '--port', '0', '--web', path.join(root, 'web'), '--kernel', kernel, '--store', store], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+const base = serverUrl ?? await new Promise((resolve, reject) => {
   let buf = '';
   srv.stdout.on('data', (d) => {
     buf += d;
@@ -100,7 +105,7 @@ worker.on('message', (m) => {
     console.log(snapshotLine);
     afterBoot().then(
       () => {
-        srv.kill();
+        srv?.kill();
         process.exitCode = m.code;
       },
       (e) => fail(e.message),

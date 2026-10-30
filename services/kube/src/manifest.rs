@@ -11,6 +11,7 @@
 //! serves = "echo"           # optional: its pods are the service echo (get `listen`)
 //! uses = ["echo"]           # optional: services its pods may call (get `svc:echo`)
 //! config = "greeting"       # optional: a Config's files and env on top of the image
+//! node = "test"             # optional: only on this node (machine)
 //!
 //! [resources]               # each pod's quota (a Space: the whole space's)
 //! mem = "8M"
@@ -47,6 +48,7 @@ struct Raw {
     #[serde(default)]
     uses: Vec<String>,
     config: Option<String>,
+    node: Option<String>,
     #[serde(default)]
     files: BTreeMap<String, String>,
     #[serde(default)]
@@ -81,6 +83,7 @@ pub struct Template {
     pub serves: Option<String>,
     pub uses: Vec<String>,
     pub config: Option<String>,
+    pub node: Option<String>,
 }
 
 pub enum Object {
@@ -132,6 +135,7 @@ pub fn parse(text: &str) -> Result<Object, String> {
                 serves: r.serves,
                 uses: r.uses,
                 config: r.config,
+                node: r.node,
             };
             Ok(Object::Deployment { name: r.name, replicas: r.replicas.unwrap_or(1), template })
         }

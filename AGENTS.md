@@ -66,7 +66,8 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   14. 像一般 OS 一樣用：shell 自己的檔案系統（`root` 映像）、檔案 / 文字 / 系統指令、管線與導向、`save` — **完成**
   15. 「學生能像在 Linux 上一樣練習」（使用者確認的目標）：shell 語言（小 sh）、更多文字指令、↑ ↓ 歷史 — **完成**
   17. 類 k8s（單機宣告式）：`kube` 服務、Deployment / Space、reconcile、重啟退避 — **完成**
-  18. capability 版 Service、Config、probe、滾動更新 — **完成**（之後：M19 多節點、跨架構排程；M20 網頁叢集圖與課程）
+  18. capability 版 Service、Config、probe、滾動更新 — **完成**
+  19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**（之後：M20 網頁叢集圖與課程）
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -81,6 +82,14 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - 滾動更新：範本或 Config 變了 = 新 revision（最多留 10 個）；pod 記自己的 rev。maxSurge 1 / maxUnavailable 0：先多建一個新 pod，ready 的數量超過 replicas 就移除一個舊的；沒 ready 的舊 pod 直接移除。`kube rollout status|history|undo`（undo = 以前一個 revision 的範本出新 revision）。
   - dock：`run --handle NAME`（依序對應訊息帶的 handle，放進 pod 名稱空間；只有 handle、沒有文字的訊息才是「新 client」）；pod 的環境有 `POD=名稱`。
   - `apps/echo`（serve：回 `POD: 訊息`；`echo hang N` N 秒後不再回應）；worker 會印 `MESSAGE` 與 `/etc/message.txt`，每 3 s 呼叫每個 `svc:`。範例 `echo.toml`、`front.toml`、`greeting.toml`、`stuck.toml`；測試 `tests/m18.expect`。
+- **M19（叢集）**：
+  - 共用同一個 ruos serve 的機器 = 一個叢集，節點名稱 = 機器名稱（`?machine=NAME`；頁面的網址也可以帶 `?machine=`，預設 `browser`；測試用 `test`、`node-b`）。沒有 server 的機器（QEMU 沒有 PODSRV）是一個節點的叢集，記錄放在 kube 自己的記憶體（`api.rs` 的 local）。
+  - ruos serve 的 `cluster.rs`：記錄 = 版本（全域遞增）+ 最後寫入的 server 時間 + 值，存在 `STORE/cluster/`（每筆一個檔案，`/` 換成 `+`）；remote 的 `KV_HELLO`（機器名稱、session、時間）、`KV_LIST prefix`、`KV_PUT key expect value`（expect：空 = 不管、0 = 必須不存在、N = 版本必須是 N）、`KV_DEL`。store 原樣轉送（`libsys::store::Store::kv`）。test.sh 每次開始清掉 `build/store/cluster`。
+  - 記錄（值是 `欄位 值` 行，見 `services/kube/src/api.rs` 開頭）：`nodes/N`（arch、session；記錄時間 = 租約）、`leader`、`deploy/D`（replicas、rev、created）、`rev/D/R`（`image` + `---` + manifest 原文）、`ctl/D`（leader 寫：next、rolling）、`pod/P`（leader 寫：deploy、rev、node 或 `-`）、`status/P`（節點寫：phase、ready、restarts、started、wait、reason、dock）、`config/C`（`version N` + `---` + manifest）、`space/S`、`events/D`（最後 14 行，CAS 加上去）。
+  - 每個 kube 的迴圈：每 1 s `refresh`（整個 KV_LIST）+ 寫自己的 `nodes/N` + 搶 / 續 `leader`（6 s 租約，CAS）；leader 跑 `control.rs`（orphan 清理；節點租約（8 s）過期 → 移除它的 pod；滾動 / 擴縮同 M18；新 pod 排程：節點活著、`node` 選擇器、映像有那個架構或 wasm32（wasmrt，分數 +100）、pod 最少者優先），每個 kube 的 `kubelet.rs` 跑分到自己節點的 pod（M18 的重啟、退避、probe、Service），寫 `status/P`。client 指令之後馬上跑一輪（單節點時效果是立即的）。Space 是每個節點的 dock 各自建（第一次需要時）。Config 的衍生映像 `push` 到 registry，別的節點自己拉。
+  - 限制：Service 連線只交給同一個節點上的 pod（channel 不能跨機器）；`kube logs` 只看得到本機的 pod；沒有容量篩選（dock 的 quota 拒絕就 Pending）。
+  - `kube get nodes`（STATUS Ready / NotReady、ROLE leader）；`get pods` 多了 NODE 欄。init 在 shell 結束時先停 kube，再請 dock `shutdown`（停掉所有 pod：pod 拿著 console client，否則 console 不會結束、機器不會關）。
+  - 測試：test.sh 的 wasm 在 boot 2 之後跑 `cluster_test`：另起一個 ruos serve，先開 `node-b`（`tests/cluster-b.input`：sleep 25 後 exit），它的 shell ready 後再開 `test`（`tests/cluster.input`），比對 `tests/cluster.expect`（不是 m 開頭，所以 boot 1 不比對它）：兩個節點、pod 分到兩邊、`node = "node-b"` 的 pod、node-b 離開後它的 pod 在 test 重建、留下的 pinned 變 Unschedulable、leader 交接。`web/test/boot.mjs --server URL` 用已經在跑的 server。範例 `spread.toml`、`pinned.toml`。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）

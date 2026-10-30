@@ -9,6 +9,7 @@
 //!   watch                   then events, one a message  → `ok watching`, `event start|exit|stop|rm ID NAME [CODE]`
 //!   space NAME SIZE TASKS   a child quota for pods      → `ok space NAME`
 //!   spaces                                              → a table
+//!   shutdown                every running pod ends      → `ok stopped N`
 //!   stop ID|NAME                                        → `ok stopped NAME`
 //!   wait ID|NAME   (answered when the pod ends)         → `exit CODE` / `stopped`
 //!   commit ID|NAME IMAGE[:TAG]                          → `ok committed REF ID FILES REMOVED`

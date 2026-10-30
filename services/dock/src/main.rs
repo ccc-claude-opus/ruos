@@ -342,6 +342,17 @@ impl Dock {
             },
             ["ps"] => self.reply(client, &self.ps()),
             ["pods"] => self.reply(client, &self.pods()),
+            // The machine is going down: every pod ends.
+            ["shutdown"] => {
+                let mut n = 0;
+                for p in self.pods.iter_mut().filter(|p| !p.removed && p.state == State::Running) {
+                    let _ = p.task.kill();
+                    let _ = p.task.wait();
+                    p.state = State::Stopped;
+                    n += 1;
+                }
+                self.reply(client, &format!("ok stopped {n}"));
+            }
             ["watch"] => {
                 self.watchers.push(client);
                 self.reply(client, "ok watching");

@@ -1,0 +1,15 @@
+^NAME +ARCH +STATUS +PODS +ROLE$
+^node-b +wasm32 +Ready +0 +[a-z-]+$
+^test +wasm32 +Ready +0 +[a-z-]+$
+^deployment/spread created$
+^spread-[0-9] +[01]/1 +Running +0 +1 +[0-9]+s +node-b$
+^spread-[0-9] +[01]/1 +Running +0 +1 +[0-9]+s +test$
+^deployment/pinned created$
+^pinned-1 +[01]/1 +Running +0 +1 +[0-9]+s +node-b$
+^kube: pinned-1 runs on node-b; its logs stay on that machine$
+^node-b +wasm32 +NotReady +0 +-$
+^test +wasm32 +Ready +4 +leader$
+^spread-[5-9] +1/1 +Running +0 +1 +[0-9]+s +test$
+^pinned-2 +0/1 +Unschedulable +0 +1 +[0-9]+s +-$
+^  [0-9]+s +Removed pod spread-[0-9] \(node node-b is gone\)$
+^deployment/spread deleted$

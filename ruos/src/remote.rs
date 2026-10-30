@@ -9,10 +9,12 @@
 //! - INDEX / OBJ_READ_AT: machines pull images they do not have (a ref's
 //!   index id, then every object in parts);
 //! - DISK_INFO / DISK_READ / DISK_WRITE: the machine's disk (wasm32 has no
-//!   block device), `STORE/disks/MACHINE.img`, 16 MiB.
+//!   block device), `STORE/disks/MACHINE.img`, 16 MiB;
+//! - KV_HELLO / KV_LIST / KV_PUT / KV_DEL: the cluster's records (cluster.rs).
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::cluster::{self, Put};
 use crate::id::Id;
 
 const OK: u8 = 0;
@@ -33,6 +35,10 @@ const OBJ_PUT_PART: u8 = 25;
 const DISK_READ: u8 = 14;
 const DISK_WRITE: u8 = 15;
 const DISK_INFO: u8 = 16;
+const KV_HELLO: u8 = 40;
+const KV_LIST: u8 = 41;
+const KV_PUT: u8 = 42;
+const KV_DEL: u8 = 43;
 const SECTOR: u64 = 512;
 const DISK_SIZE: u64 = 16 << 20;
 
@@ -344,6 +350,39 @@ impl Session {
                     self.disk()
                         .and_then(|mut f| f.seek(SeekFrom::Start(sector * SECTOR)).and_then(|_| f.write_all(data)))
                         .map(|_| reply(OK, b""))
+                }
+            }
+            KV_HELLO => Ok(reply(OK, format!("{} {} {}", self.machine, self.id, cluster::now_ms()).as_bytes())),
+            KV_LIST => {
+                let p = decode(msg, 1).map(|(_, f)| text(f[0]).to_string()).unwrap_or_default();
+                Ok(cluster::with(&self.store, |kv| {
+                    let mut out = format!("{}\n", cluster::now_ms()).into_bytes();
+                    for (k, r) in kv.list(&p) {
+                        out.extend_from_slice(format!("{k} {} {} {}\n", r.version, r.updated, r.value.len()).as_bytes());
+                        out.extend_from_slice(&r.value);
+                        out.push(b'\n');
+                    }
+                    reply(OK, &out)
+                }))
+            }
+            KV_PUT | KV_DEL => {
+                let n = if op == KV_PUT { 3 } else { 2 };
+                match decode(msg, n) {
+                    Some((_, f)) if cluster::key_ok(text(f[0])) => {
+                        let expect = (!f[1].is_empty()).then(|| num(f[1]));
+                        Ok(cluster::with(&self.store, |kv| match op {
+                            KV_PUT => match kv.put(text(f[0]), expect, f[2]) {
+                                Put::Ok(v) => reply(OK, format!("{v}").as_bytes()),
+                                Put::Conflict => reply(FAILED, b"conflict"),
+                            },
+                            _ => match kv.delete(text(f[0]), expect) {
+                                Some(true) => reply(OK, b""),
+                                Some(false) => reply(FAILED, b"conflict"),
+                                None => reply(NOT_FOUND, b""),
+                            },
+                        }))
+                    }
+                    _ => Ok(reply(FAILED, b"bad key")),
                 }
             }
             _ => Ok(reply(FAILED, b"unknown request")),

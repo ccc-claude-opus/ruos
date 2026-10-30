@@ -1,5 +1,5 @@
 // The browser's kernel Worker.
-// In:  {type:'boot', url}, {type:'key', bytes}, {type:'werror', id, msg}, {type:'snapshot'}.
+// In:  {type:'boot', url, machine}, {type:'key', bytes}, {type:'werror', id, msg}, {type:'snapshot'}.
 // Out: {type:'out', text}, {type:'exit', code}, {type:'spawn', id, port}, {type:'kill', id},
 //      {type:'snapshot', json}.
 import { bootKernel } from './kernel_host.js';
@@ -13,8 +13,8 @@ self.onmessage = async (e) => {
   if (m.type === 'boot') {
     try {
       const bytes = await (await fetch(m.url)).arrayBuffer();
-      // The browser is one machine: its disk on the server outlives reloads.
-      const remote = new URL('v1/remote?machine=browser', m.url);
+      // The page is one machine: its disk on the server outlives reloads.
+      const remote = new URL(`v1/remote?machine=${m.machine || 'browser'}`, m.url);
       remote.protocol = remote.protocol === 'https:' ? 'wss:' : 'ws:';
       kernel = await bootKernel(bytes, {
         host: 'browser',

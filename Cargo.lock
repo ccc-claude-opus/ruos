@@ -518,6 +518,7 @@ name = "kube"
 version = "0.1.0"
 dependencies = [
  "libsys",
+ "objstore",
  "serde",
  "toml",
 ]

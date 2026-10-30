@@ -47,6 +47,42 @@ check_boot1() {
     [ $ok = 1 ]
 }
 
+# Two machines on one server are one cluster: node-b comes up first and
+# leaves after a while; test schedules pods on both, then sees node-b's
+# pods made again on itself (tests/cluster*.input, tests/cluster.expect).
+cluster_test() {
+    local log=build/test-wasm-cluster.log logb=build/test-wasm-node-b.log srv port b ok=1
+    target/release/ruos serve --port 0 --web web --kernel build/kernel.wasm --store build/store > build/cluster-srv.log 2>&1 &
+    srv=$!
+    for _ in $(seq 600); do
+        port=$(sed -n 's/.*listening on http:\/\/127.0.0.1:\([0-9]*\).*/\1/p' build/cluster-srv.log)
+        [ -n "$port" ] && break
+        sleep 0.05
+    done
+    rm -f build/store/disks/node-b.img
+    timeout "$TIMEOUT" node web/test/boot.mjs --server "http://127.0.0.1:$port" --input tests/cluster-b.input --machine node-b > "$logb" 2>&1 &
+    b=$!
+    for _ in $(seq 1200); do
+        grep -q '^shell: ready' "$logb" 2>/dev/null && break
+        sleep 0.05
+    done
+    timeout "$TIMEOUT" node web/test/boot.mjs --server "http://127.0.0.1:$port" --input tests/cluster.input --machine test > "$log" 2>&1 || ok=0
+    wait $b || ok=0
+    kill $srv 2>/dev/null
+    wait $srv 2>/dev/null
+    check "$log" cluster wasm || ok=0
+    if grep -Eq '^panic:|FAILED' "$log" "$logb"; then
+        grep -E '^panic:|FAILED' "$log" "$logb" | sed 's/^/  /'
+        ok=0
+    fi
+    if [ $ok = 1 ]; then
+        echo "  cluster: $(grep -c . tests/cluster.expect) checks on test + node-b"
+    else
+        echo "  cluster failed (build/test-wasm-cluster.log, build/test-wasm-node-b.log)"
+    fi
+    [ $ok = 1 ]
+}
+
 # What the machines left on the server at URL.
 post_checks() {
     local url=$1 log=$2 p c
@@ -100,7 +136,7 @@ for p in "${platforms[@]}"; do
     esac
 done
 cargo build --release --quiet -p ruos -p podimg
-rm -rf build/store/pods build/store/disks
+rm -rf build/store/pods build/store/disks build/store/cluster
 
 PODSRV_PID=
 cleanup() { [ -n "$PODSRV_PID" ] && kill "$PODSRV_PID" 2>/dev/null; }
@@ -146,7 +182,9 @@ for p in "${platforms[@]}"; do
         echo "  boot 2 failed"
         tail -5 "$log2" | sed 's/^/  | /'
         failed+=("$p")
+        continue
     fi
+    [ "$p" = wasm ] && { cluster_test || failed+=("$p"); }
 done
 
 if [ ${#failed[@]} -eq 0 ]; then

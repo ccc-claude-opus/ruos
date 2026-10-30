@@ -11,5 +11,6 @@ bench = false
 
 [dependencies]
 libsys = { path = "../../libsys" }
+objstore = { path = "../../objstore" }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }

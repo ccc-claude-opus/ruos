@@ -109,6 +109,11 @@ fn main(_arg: usize) -> i64 {
     if dock.write(b"", &[kd_srv.0]).is_err() {
         return 1;
     }
+    // init's own dock client, to stop every pod when the shell ends.
+    let Ok((own, own_srv)) = Channel::create() else { return 1 };
+    if dock.write(b"", &[own_srv.0]).is_err() {
+        return 1;
+    }
     let Ok(ks) = store.connect() else { return 1 };
     let ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("client", kube_srv.0);
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
@@ -130,6 +135,8 @@ fn main(_arg: usize) -> i64 {
     println!("init: shell exited ({})", code);
     let _ = kube_task.kill();
     let _ = kube_task.wait();
+    // Pods hold console clients: the console ends only once they are gone.
+    let _ = libsys::dock::Dock(own).request("shutdown");
     let _ = dock_task.kill();
     let _ = dock_task.wait();
     // The console ends once its last client is gone.

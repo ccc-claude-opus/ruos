@@ -373,6 +373,8 @@ impl Store<'_> {
             UP_WRITE | UP_READ | UP_LIST | UP_DELETE | UP_READ_AT | UP_WRITE_AT | UP_STAT if self.remote.is_some() => {
                 self.remote_call(msg)
             }
+            // The cluster's records (kube) are on the server.
+            KV_HELLO | KV_LIST | KV_PUT | KV_DEL => self.remote_call(msg),
             UP_READ_AT => {
                 let a = f(4);
                 let (off, len) = (num(&a[2]), num(&a[3]).min(MAX_INLINE));

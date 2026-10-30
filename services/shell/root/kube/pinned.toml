@@ -1,0 +1,6 @@
+# A pod only for node node-b (a node selector): while there is no such
+# node it stays Unschedulable.
+kind = "Deployment"
+name = "pinned"
+image = "worker"
+node = "node-b"

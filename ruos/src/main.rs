@@ -34,6 +34,7 @@ use tungstenite::protocol::Role;
 use tungstenite::{Message, WebSocket};
 
 mod assets;
+mod cluster;
 mod id;
 mod remote;
 

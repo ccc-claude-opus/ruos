@@ -84,7 +84,9 @@ function boot() {
       status.textContent = `核心已關機（代碼 ${m.code}）`;
     }
   };
-  worker.postMessage({ type: 'boot', url: new URL('kernel.wasm', location.href).href });
+  // ?machine=NAME: another machine (its own disk; another node of the cluster).
+  const machine = (new URLSearchParams(location.search).get('machine') || 'browser').replace(/[^a-z0-9-]/g, '');
+  worker.postMessage({ type: 'boot', url: new URL('kernel.wasm', location.href).href, machine: machine || 'browser' });
   kbd.focus();
 }
 
