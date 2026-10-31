@@ -12,7 +12,7 @@ mkdir -p "$OUT"
 
 # User programs: wasm modules with an imported shared memory (threads =
 # instances on it). Each becomes an image (its Podfile.toml).
-USER_PROGRAMS=(init store console shell dock kube overlay ktest peer hello snoop fault hog writer bench worker echo greet site)
+USER_PROGRAMS=(init store console shell dock kube overlay wasi ktest peer hello snoop fault hog writer bench worker echo greet site)
 TARGET=wasm32-unknown-unknown
 WASM_USER_FLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
  -C link-arg=--import-memory -C link-arg=--shared-memory -C link-arg=--max-memory=67108864 \
@@ -27,12 +27,31 @@ build_user() {
     for x in "${USER_PROGRAMS[@]}"; do cp "$ROOT/target/wasm-user/$TARGET/release/$x.wasm" "$dir/$x.wasm"; done
 }
 
+# WASI programs (wasm32-wasip1, not written for ruos; services/wasi runs
+# them): the crates in wasi-programs/ go with the user programs (and into
+# the root image's /bin); uutils coreutils (crates.io, `cargo install`
+# caches it in target/wasi-tools) becomes its own image, only in the
+# registry (build/store): it is too big for the boot pack.
+build_wasi() {
+    local d n
+    for d in "$ROOT"/wasi-programs/*/Cargo.toml; do
+        n=$(basename "$(dirname "$d")")
+        cargo build --release --quiet --target wasm32-wasip1 --manifest-path "$d"
+        cp "$(dirname "$d")/target/wasm32-wasip1/release/$n.wasm" "$OUT/user-wasm32/$n.wasm"
+    done
+    cargo install --quiet --root "$ROOT/target/wasi-tools" --target-dir "$ROOT/target/wasi-tools-build" \
+        --target wasm32-wasip1 coreutils@0.12.0 --no-default-features --features feat_wasm 2> /dev/null || true
+    mkdir -p "$OUT/wasi-tools"
+    cp "$ROOT/target/wasi-tools/bin/coreutils.wasm" "$OUT/wasi-tools/coreutils.wasm" 2> /dev/null || true
+}
+
 # Every program becomes an image (its Podfile.toml) in build/images, which
 # is copied into build/store, the registry the server (ruos serve) serves
 # (it also keeps what machines push). The kernel embeds init and the pack
 # of build/images.
 build_images() {
     build_user
+    build_wasi
     (cd "$ROOT" && cargo build --release --quiet -p podimg)
     rm -rf "$OUT/images"
     local pf
@@ -41,6 +60,9 @@ build_images() {
     done
     mkdir -p "$OUT/store"
     cp -R "$OUT/images/." "$OUT/store/"
+    if [ -f "$OUT/wasi-tools/coreutils.wasm" ]; then
+        "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/coreutils/Podfile.toml" --store "$OUT/store" --programs "wasm32=$OUT/wasi-tools" > /dev/null
+    fi
 }
 
 build() {

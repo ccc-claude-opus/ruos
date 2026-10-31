@@ -274,27 +274,109 @@ impl Sh {
         Ok(format!("saved into {}:latest {} (the next boot starts with these files)\n", crate::ROOT, &id[..12.min(id.len())]).into_bytes())
     }
 
-    /// A program from /bin (or a path): its own console client and the
-    /// arguments, nothing else.
-    fn program(&self, argv: &[String]) -> Result<Option<i64>, String> {
+    /// A program from /bin (or a path), else the image of that name (its
+    /// entry; the store pulls it from the registry if it must): its own
+    /// console client and the arguments, nothing else. A WASI program also
+    /// gets the shell's files (`fs`) and `PWD`: POSIX programs need files.
+    /// When its input is a pipe (or a file), or its output goes on (a pipe,
+    /// a file, `$(…)`), its console is the shell's own: the shell reads its
+    /// writes, gives it the input a line at a time (then EOF), and the
+    /// output comes back like a built-in command's.
+    fn program(&self, argv: &[String], input: Option<Vec<u8>>) -> Result<Option<(i64, Vec<u8>)>, String> {
         let fs = self.fs()?;
         let path = if argv[0].contains('/') { self.path(&argv[0]) } else { format!("/bin/{}", argv[0]) };
-        if !matches!(fs.stat(&path), Ok((false, _))) {
+        let (m, size) = if matches!(fs.stat(&path), Ok((false, _))) {
+            fs.read_mem(&path).map_err(err("read"))?
+        } else if !argv[0].contains('/') && self.store.index(&argv[0]).is_ok() {
+            self.store.program(&argv[0]).map_err(err(&argv[0]))?
+        } else {
             return Ok(None);
-        }
-        let (m, size) = fs.read_mem(&path).map_err(err("read"))?;
+        };
         let (mine, theirs) = Channel::create().map_err(err("channel"))?;
-        self.con.connect(theirs.0).map_err(err("console"))?;
+        let served = input.is_some() || self.piped_out;
+        if !served {
+            self.con.connect(theirs.0).map_err(err("console"))?;
+        }
         let args: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let ns = libsys::args::add(Namespace::new().add("console", mine.0), &args, &[]).map_err(err("args"))?;
+        let mut ns = Namespace::new().add("console", mine.0);
+        let mut env = Vec::new();
+        if libsys::store::is_wasi(m, size) {
+            if let Ok(f) = fs.connect() {
+                ns = ns.add("fs", f.0.0);
+            }
+            env.push((String::from("PWD"), self.cwd.clone()));
+        }
+        let ns = libsys::args::add(ns, &args, &env).map_err(err("args"))?;
         let name = path.rsplit('/').next().unwrap_or(&path);
         let r = self.store.spawn_module(m, size, name, &ns, None);
         let _ = m.0.close();
         let task = r.map_err(err("start"))?;
+        let out = if served { self.serve_console(theirs, task, input) } else { Vec::new() };
         let code = task.wait().map_err(err("wait"))?;
         let _ = task.close();
-        Ok(Some(code))
+        Ok(Some((code, out)))
     }
+
+    /// Serves a program's console until it ends: its writes are its output
+    /// (or go to the console when its output is not piped), its reads take
+    /// `input` a line at a time, then EOF (no input: lines from the console).
+    fn serve_console(&self, c: Channel, task: libsys::Handle, input: Option<Vec<u8>>) -> Vec<u8> {
+        use libsys::console::{EOF, READ_LINE, WRITE};
+        use libsys::{Port, signal};
+        let mut lines: Option<alloc::collections::VecDeque<Vec<u8>>> = input.map(|b| {
+            let mut l: alloc::collections::VecDeque<Vec<u8>> = b.split(|&x| x == b'\n').map(Vec::from).collect();
+            if l.back().is_some_and(Vec::is_empty) {
+                l.pop_back();
+            }
+            l
+        });
+        let mut out = Vec::new();
+        let Ok(port) = Port::create() else { return out };
+        let _ = port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, 0);
+        let _ = port.bind(task, signal::TERMINATED, 1);
+        let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
+        let mut done = false;
+        while !done {
+            let Ok(p) = port.wait(u64::MAX) else { break };
+            done = p.key == 1;
+            loop {
+                match c.read(&mut buf, &mut []) {
+                    Ok((n, _)) if n > 0 && buf[0] == WRITE => {
+                        if self.piped_out {
+                            out.extend_from_slice(&buf[1..n]);
+                        } else {
+                            let _ = self.con.write(&buf[1..n]);
+                        }
+                    }
+                    Ok((n, _)) if n > 0 && buf[0] == READ_LINE => {
+                        let reply = match &mut lines {
+                            Some(l) => match l.pop_front() {
+                                Some(line) => [&[READ_LINE][..], &line].concat(),
+                                None => alloc::vec![EOF],
+                            },
+                            None => {
+                                let mut lb = [0u8; libsys::console::MAX_LINE];
+                                match self.con.read_line(&mut lb) {
+                                    Ok(n) => [&[READ_LINE][..], &lb[..n]].concat(),
+                                    Err(_) => alloc::vec![EOF],
+                                }
+                            }
+                        };
+                        let _ = c.write(&reply, &[]);
+                    }
+                    Ok(_) => {}
+                    Err(libsys::Error::ShouldWait) => {
+                        let _ = port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, 0);
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        let _ = c.close();
+        out
+    }
+
 }
 
 pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
@@ -572,12 +654,12 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
         "mem" => Ok(mem().into_bytes()),
         "images" => sh.store.list().map_err(err("images")),
         "image" => sh.image(a.rest.first().copied().unwrap_or("")),
-        _ => match sh.program(argv)? {
-            Some(0) => Ok(Vec::new()),
-            Some(code) => {
+        _ => match sh.program(argv, input)? {
+            Some((0, out)) => Ok(out),
+            Some((code, out)) => {
                 cprintln!(con, "[{} exited with {}]", argv[0], code);
                 sh.status = code;
-                Ok(Vec::new())
+                Ok(out)
             }
             None => Err(String::from("unknown command (type help)")),
         },

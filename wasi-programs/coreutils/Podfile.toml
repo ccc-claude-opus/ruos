@@ -1,0 +1,9 @@
+# uutils coreutils (Rust's coreutils, from crates.io) built for wasm32-wasip1:
+# one multicall program, `coreutils ls -l`, `coreutils wc`, … It is large
+# (about 10 MB), so it is only in the registry, not in the boot pack: the
+# store pulls it the first time it is run.
+name = "coreutils"
+entry = "/bin/coreutils"
+
+[programs]
+"/bin/coreutils" = "coreutils"

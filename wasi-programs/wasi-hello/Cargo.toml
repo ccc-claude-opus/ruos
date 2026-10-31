@@ -1,0 +1,11 @@
+[package]
+name = "wasi-hello"
+version = "0.1.0"
+edition = "2024"
+
+# Not part of ruos's workspace: an ordinary std program for wasm32-wasip1.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+strip = true

@@ -232,6 +232,23 @@ export const LESSONS = [
       { cmd: 'kube delete site', note: '收拾：網址變成 404' },
     ],
   },
+  {
+    title: '16. 現成的程式（WASI）',
+    text: [
+      'WASI 是 WebAssembly 程式和作業系統之間的標準介面：用 Rust、C、Go 寫的一般程式，編成 `wasm32-wasip1` 就能在 wasmtime、瀏覽器……以及 ruos 上跑。ruos 的 `wasi` 程式把 WASI 的呼叫（讀檔、寫檔、時間、參數）轉成 ruos 的 capability。',
+      '程式只拿到主控台和**目前的目錄**：相對路徑照常，`/` 開頭的路徑也還是在這個目錄底下，看不到上層——要給它多少，就是讓它從哪個目錄開始。可以接管線。`coreutils` 是 Rust 版的 GNU coreutils（uutils），第一次用時從 server 的 registry 拉下來。',
+    ],
+    steps: [
+      { cmd: 'wasi-hello one two', note: '一個一般的 Rust 程式：參數與 PWD' },
+      { cmd: 'wasi-hello write notes.txt; cat notes.txt', note: '它用 std::fs 寫的檔案，shell 看得到' },
+      { cmd: 'wasi-hello read /notes.txt', note: '/ 開頭也是目前目錄底下' },
+      { cmd: 'coreutils ls', note: 'uutils coreutils（第一次會從 registry 拉，約 10 MB）' },
+      { cmd: 'coreutils sort poem.txt | coreutils head -n 2', note: '兩個 WASI 程式接管線' },
+      { cmd: 'cat poem.txt | coreutils wc -l', note: '內建指令接 WASI 程式' },
+      { cmd: 'coreutils sha256sum poem.txt', note: '雜湊' },
+      { cmd: 'cd /; coreutils ls; cd /home', note: '從 / 開始，它就看得到全部' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

@@ -771,6 +771,7 @@ impl Sh {
                 return Flow::Exit(argv.get(1).and_then(|x| x.parse().ok()).unwrap_or(self.status));
             }
             self.status = 0;
+            self.piped_out = i + 1 < n || s.output.is_some() || !self.captures.is_empty();
             let out = match cmds::run(self, &argv, input) {
                 Ok(o) => o,
                 Err(e) => {

@@ -54,6 +54,8 @@ pub struct Sh {
     pub status: i64,
     /// Output being collected for `$(…)`, innermost last.
     pub captures: Vec<Vec<u8>>,
+    /// The command running now writes into a pipe, a file or `$(…)`.
+    pub piped_out: bool,
     /// A command (`exit` in a script run by `.`) asked to end the shell.
     pub exit_request: Option<i64>,
 }
@@ -143,6 +145,7 @@ fn main(_arg: usize) -> i64 {
         args: alloc::vec![String::from("shell")],
         status: 0,
         captures: Vec::new(),
+        piped_out: false,
         exit_request: None,
     };
     sh.vars.insert(String::from("HOME"), String::from("/home"));

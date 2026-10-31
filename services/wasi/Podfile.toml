@@ -1,0 +1,7 @@
+# wasi: runs WASI (preview1) programs on ruos: started for a module that
+# imports wasi_snapshot_preview1 (libsys::store::Store::spawn_module).
+name = "wasi"
+entry = "/bin/wasi"
+
+[programs]
+"/bin/wasi" = "wasi"

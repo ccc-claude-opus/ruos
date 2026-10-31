@@ -64,7 +64,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1；5. 網站範例、課程、發布 2.0.0。
+- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1 — **完成**；5. 網站範例、課程、發布 2.0.0。
 
 ## 後端服務（v2.0 第 3 步）
 
@@ -73,6 +73,14 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - **capability**：store 記每個 client 的 grants（`Grants`：`*`、`http`、`sql:NAME`、`redis:NAME`）。`web` 的 client 是 `*`；`CONNECT` 繼承；`GRANT names` + channel 端 = 只有那些（且是自己有的）的新 client（`Store::grant`）。HTTP_* / SQL / REDIS 先檢查 `needs()`，沒有就回 `no X capability`。init 把 `web` 給 shell 當 `backend`（全部）與 `http`（只有 http）；kube 拿 `backend` 的 CONNECT，kubelet 依 `uses` 給 pod / 函式 `Store::grant(["sql:app"])` 等；shell 的 `run IMAGE sql:app` 也是 grant。
 - libsys `sql.rs`（`Sql::get(name)` = 名稱空間的 `sql:NAME`；`Sql::with(store, name)`；`query(sql, params_json)`、`query_text`）、`redis.rs`（`Redis::get`、`cmd(&[…])`、`cmd_text`）。shell：`sql [-d DB] STATEMENT`（預設 `app`，也接管線）、`redis [-d NAME] CMD ARGS`（預設 `cache`）。snoop 會試著經自己的 `store` 用 `app`（被拒），有 `sql:app` 就查一次。
 - 測試：`tests/m24.expect`（SQL、snoop 的 capability、另一個資料庫）；boot.mjs 有 `redis-server` 就起一個（隨機埠）給 `--redis cache=…`，test.sh 那時才比對 `tests/redis.expect`。test.sh 每次清掉 `build/store/sql`，逾時預設 600 s。
+
+## WASI（v2.0 第 4 步）
+
+- `services/wasi`（ruos 程式，就是那個 task）：實作 `wasi_snapshot_preview1`（`wasi_*` 匯出，`build.rs` 掃 `src/main.rs` 的 `pub extern "C" fn wasi_*` 加 `--export`）。guest（`wasi:module:LEN` 的 Memory 物件）由 `web/task_runtime.js` 的 `wasiHost` 在同一個 Worker 裡 instantiate，它的 WASI import 直接接到 shim 的匯出（沒有的回 ENOSYS 52；import memory 等非函式的 import 不支援）；guest 的 memory 是它自己的（不共享），shim 經 `wasi_host.read/write` 複製；`proc_exit` = `wasi_host.exit` 丟例外讓 guest 回捲；trap → `wasi: trap: …`，結束碼 134。
+- 對應：fd 0/1/2 = `console`（stdin 一次一行；`console::EOF` 回覆 = 檔案結尾）；fd 3 = 唯一的 preopen `.` = `PWD` 指的目錄（`fs`）。**只有 `.`**：wasi-libc 的工作目錄固定從 `/` 開始，會先把相對路徑變成絕對路徑再找 preopen，有 `/` preopen 時相對路徑都會跑到 `/`；所以只給 `.`，`/x` 也就是那個目錄下的 `x`（像 `wasmtime --dir .`），程式看不到目錄以上。檔案經 fs 的 `READ_AT`/`WRITE_AT`/`STAT`/`LIST`/`TRUNCATE`…；時鐘、亂數、`poll_oneoff`（睡）用系統呼叫。guest 的 memory 沒有記入 quota（已知限制）。
+- `libsys::store::is_wasi`（前 256 KiB 有 `wasi_snapshot_preview1`）→ `Store::spawn_module` 改啟動 `wasi`。shell 執行程式時：`/bin/NAME`，否則同名的映像（store 會從 registry 拉）；WASI 程式另外拿到 shell 的 `fs`（新 client）與 `PWD`。程式的輸入是管線 / 檔案，或輸出要接下去（管線、`>`、`$(…)`：`Sh.piped_out`）時，console 是 shell 自己服務的（`serve_console`：WRITE 收進輸出、READ_LINE 給一行，沒了回 EOF），所以 `coreutils sort f | coreutils head` 可以。
+- WASI 程式：`wasi-programs/`（各自獨立的 crate，`[workspace]`，`wasm32-wasip1`；`wasi-hello` 放進 root 映像的 `/bin`）；uutils coreutils 0.12（crates.io，`cargo install … --features feat_wasm`，快取在 `target/wasi-tools`）10 MB，是只在 registry（`build/store`）的映像 `coreutils`，不放進 boot pack。store 拉大物件：先 `OBJ_SIZE`（新的 remote op 49）再 `try_reserve_exact`，大於 1 MiB 的不寫進磁碟日誌（下次開機再拉）——曾因每次加倍與多份複製在 64 MiB 的 store 裡 OOM、整個 store 掛掉。C 程式（sqlite3、Lua）要 wasi-sdk，這台機器沒有。
+- 測試 `tests/m25.expect`。
 
 ## kube（M17）
 

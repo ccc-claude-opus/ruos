@@ -28,3 +28,4 @@ rustc-ice-*.txt
 .DS_Store
 # What ./run.sh dist puts in the crate (packed by cargo package anyway).
 /ruos/assets/
+/wasi-programs/*/target/

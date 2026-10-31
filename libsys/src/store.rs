@@ -87,6 +87,8 @@ pub const HTTP_READ: u8 = 45;
 pub const SQL: u8 = 46;
 /// [REDIS, name, args (a JSON array of strings), format] → [OK, the answer] / [FAILED, why].
 pub const REDIS: u8 = 47;
+/// [OBJ_SIZE, id] → [OK, size] (on the server: what the store pulls).
+pub const OBJ_SIZE: u8 = 49;
 /// [GRANT, names, one a line] + a channel end: a new client that may use
 /// those of the backend (`http`, `sql:NAME`, `redis:NAME`; `*` = all) that
 /// this one may.
@@ -270,8 +272,18 @@ impl Store {
         r
     }
 
-    /// Starts a program image held in `m` (`len` bytes; the caller keeps `m`).
+    /// Starts a program image held in `m` (`len` bytes; the caller keeps
+    /// `m`): a ruos program as it is, a WASI program (one that imports
+    /// `wasi_snapshot_preview1`) under the `wasi` program.
     pub fn spawn_module(&self, m: Memory, len: u64, name: &str, ns: &Namespace, quota: Option<Handle>) -> Result<Handle> {
+        if is_wasi(m, len) {
+            let (shim, slen) = self.program("wasi")?;
+            let module = m.0.dup(crate::Rights::ALL)?;
+            let ns = ns.clone().add(&alloc::format!("wasi:module:{len}"), module);
+            let r = ns.spawn(shim, slen, name, quota);
+            let _ = shim.0.close();
+            return r;
+        }
         ns.spawn(m, len, name, quota)
     }
 
@@ -296,4 +308,14 @@ impl Store {
         self.0.write(&m, &[b.0])?;
         Ok(Store(a))
     }
+}
+
+/// Whether the module in `m` imports WASI (its import section is near the
+/// start: the first 256 KiB are enough).
+pub fn is_wasi(m: Memory, len: u64) -> bool {
+    let mut head = alloc::vec![0u8; len.min(256 * 1024) as usize];
+    if m.read(0, &mut head).is_err() || !head.starts_with(b"\0asm") {
+        return false;
+    }
+    head.windows(22).any(|w| w == b"wasi_snapshot_preview1")
 }

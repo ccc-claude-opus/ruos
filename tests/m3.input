@@ -193,4 +193,16 @@ redis RPUSH list a b c
 redis LRANGE list 0 -1
 redis GET nothing
 redis -d nosuch PING
+wasi-hello one two
+wasi-hello write notes.txt
+cat notes.txt
+wasi-hello read /notes.txt
+wasi-hello exit 7
+wasi-hello panic
+printf 'b\na\n' | wasi-hello stdin
+coreutils sort poem.txt | coreutils head -n 2
+cat poem.txt | coreutils wc -l
+echo "n=$(coreutils seq 3 | coreutils wc -l)"
+coreutils sha256sum poem.txt
+rm notes.txt
 exit 0

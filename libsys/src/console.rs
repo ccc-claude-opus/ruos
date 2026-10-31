@@ -11,6 +11,9 @@ pub const WRITE: u8 = 1;
 pub const READ_LINE: u8 = 2;
 /// [CONNECT] + one channel handle: serve another client on it.
 pub const CONNECT: u8 = 3;
+/// The reply [EOF] to READ_LINE: there is no more input (a program whose
+/// input is a pipe, served by the shell). `read_line` gives PeerClosed.
+pub const EOF: u8 = 4;
 
 pub const MAX_LINE: usize = 256;
 
@@ -33,6 +36,9 @@ impl Console {
         self.0.write(&[READ_LINE], &[])?;
         let mut m = [0u8; 1 + MAX_LINE];
         let (n, _) = self.0.recv(&mut m, &mut [])?;
+        if m[0] == EOF {
+            return Err(crate::Error::PeerClosed);
+        }
         let n = n.saturating_sub(1).min(buf.len());
         buf[..n].copy_from_slice(&m[1..1 + n]);
         Ok(n)

@@ -46,6 +46,7 @@ const KV_DEL: u8 = 43;
 const HTTP_FETCH: u8 = 44;
 const HTTP_READ: u8 = 45;
 const PART: usize = 60000;
+const OBJ_SIZE: u8 = 49;
 const SQL: u8 = 46;
 const REDIS: u8 = 47;
 const SECTOR: u64 = 512;
@@ -197,6 +198,13 @@ impl Session {
                         Err(_) => reply(NOT_FOUND, b""),
                     },
                     _ => reply(FAILED, b"bad ref"),
+                })
+            }
+            OBJ_SIZE => {
+                let f = decode(msg, 1).map(|(_, f)| text(f[0]).to_string()).unwrap_or_default();
+                Ok(match Id::parse(&f).and_then(|id| fs::metadata(self.store.join("objects").join(id.to_string())).ok()) {
+                    Some(m) => reply(OK, format!("{}", m.len()).as_bytes()),
+                    None => reply(NOT_FOUND, b""),
                 })
             }
             OBJ_READ_AT => {

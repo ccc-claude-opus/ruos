@@ -35,7 +35,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十五課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十六課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -166,6 +166,17 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `ps` | `ps` | 列出 pod（同 `dock ps`） |
 | `kill` | `kill POD...` | 停止 pod（同 `dock stop`） |
 | 其他名稱 | `hello`、`/bin/snoop` | 執行 `/bin` 裡（或路徑指定）的程式，只給它一個主控台和引數 |
+
+### 現成的 wasm 程式（WASI）
+
+用 `wasm32-wasip1` 編的一般程式（Rust 的 std、crates.io 上的工具；C 要 wasi-sdk）在 ruos 裡直接跑：由 `services/wasi` 把 WASI 的呼叫轉成 ruos 的 capability。程式拿到的是：主控台（stdin / stdout）、參數與環境變數，以及**目前目錄**（唯一的 preopen `.`：相對路徑照常，`/x` 也是目前目錄下的 `x`，看不到上層）。可以接管線、`>`、`$(…)`。
+
+| 指令 | 說明 |
+|---|---|
+| `wasi-hello ARGS` | 一個 Rust std 程式（`wasi-programs/wasi-hello`）：參數、檔案、時間、stdin |
+| `coreutils ls` / `coreutils sort f \| coreutils head -n 2` / `coreutils sha256sum f` … | uutils coreutils（Rust 版 coreutils）；第一次執行時從 registry 拉下來（約 10 MB） |
+
+shell 找程式的順序：內建指令 → `/bin/NAME` → 同名的映像。
 
 ### 後端與網路（`sql`、`redis`、`curl`）
 

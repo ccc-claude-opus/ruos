@@ -30,6 +30,8 @@ libsys::entry!(main);
 struct Remote(Channel);
 
 static LOST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Pulled objects bigger than this are not written to the disk log.
+const BIG: usize = 1 << 20;
 static DISK_FULL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl Remote {
@@ -204,7 +206,7 @@ impl Store<'_> {
             for e in Tree::decode(&self.fetch(&t)?).ok()?.entries {
                 match e.kind {
                     Kind::Dir => todo.push(e.id),
-                    Kind::File | Kind::Exec => _ = self.fetch(&e.id)?,
+                    Kind::File | Kind::Exec => self.pull_object(&e.id)?,
                     Kind::Whiteout => {}
                 }
             }
@@ -218,29 +220,46 @@ impl Store<'_> {
         Some(index)
     }
 
-    /// An object, from the server if the store does not have it.
+    /// A (small) object, from the server if the store does not have it.
     fn fetch(&mut self, id: &Id) -> Option<Vec<u8>> {
-        if let Some(b) = self.get(id) {
-            return Some(b.to_vec());
+        self.pull_object(id)?;
+        self.get(id).map(<[u8]>::to_vec)
+    }
+
+    /// Brings an object from the server unless the store has it: its size
+    /// first, so a big file (a 10 MB WASI program) takes that much memory
+    /// once, and failing (not panicking) when there is not enough.
+    fn pull_object(&mut self, id: &Id) -> Option<()> {
+        if self.get(id).is_some() {
+            return Some(());
         }
-        let (idt, mut data) = (format!("{id}"), Vec::new());
-        loop {
+        let idt = format!("{id}");
+        let r = self.remote_call(&encode(OBJ_SIZE, &[idt.as_bytes()]));
+        let size: usize = if r.first() == Some(&OK) { text(&r[1..]).parse().ok()? } else { return None };
+        let mut data = Vec::new();
+        if data.try_reserve_exact(size).is_err() {
+            println!("store: no memory for object {} ({} KiB)", id.short(), size / 1024);
+            return None;
+        }
+        while data.len() < size {
             let off = format!("{}", data.len());
             let r = self.remote_call(&encode(OBJ_READ_AT, &[idt.as_bytes(), off.as_bytes(), b"60000"]));
-            if r.first() != Some(&OK) {
+            if r.first() != Some(&OK) || r.len() == 1 {
                 return None;
             }
             data.extend_from_slice(&r[1..]);
-            if r.len() - 1 < 60000 {
-                break;
-            }
         }
         if Id::of(&data) != *id {
             println!("store: object {} from the server does not match its hash", id.short());
             return None;
         }
-        self.keep(data.clone(), false);
-        Some(data)
+        // Big objects are only in memory: the registry has them for the next boot.
+        if data.len() > BIG {
+            self.objects.insert(*id, data);
+        } else {
+            self.keep(data, false);
+        }
+        Some(())
     }
 
     /// An object as a copy-on-write memory object (one kept per object).

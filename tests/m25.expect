@@ -1,0 +1,15 @@
+^wasi-hello: 3 argument\(s\): one two$
+^wasi-hello: PWD=/home$
+^wasi-hello: wrote notes\.txt \(60 bytes\)$
+^line 3 from std::fs$
+^\[wasi-hello exited with 7\]$
+^wasi: trap: unreachable$
+^\[wasi-hello exited with 134\]$
+^wasi-hello: got "b"$
+^wasi-hello: 2 line\(s\)$
+^store: pulled coreutils \([0-9]+ objects\)$
+^a capability is narrow$
+^and that is the point$
+^5$
+^n=3$
+^faf01e59049fb0b04789e8baacafe76f7f9efa080dd4d72b7402e0ab459ded7a  poem\.txt$

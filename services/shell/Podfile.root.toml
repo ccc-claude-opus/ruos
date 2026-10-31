@@ -7,6 +7,7 @@ entry = "/bin/shell"
 "/bin/shell" = "shell"
 "/bin/hello" = "hello"
 "/bin/snoop" = "snoop"
+"/bin/wasi-hello" = "wasi-hello"
 
 [files]
 "/etc/motd" = "root/motd.txt"
