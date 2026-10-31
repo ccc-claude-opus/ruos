@@ -167,10 +167,12 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `kill` | `kill POD...` | 停止 pod（同 `dock stop`） |
 | 其他名稱 | `hello`、`/bin/snoop` | 執行 `/bin` 裡（或路徑指定）的程式，只給它一個主控台和引數 |
 
-### 網路（`curl`）
+### 後端與網路（`sql`、`redis`、`curl`）
 
 | 指令 | 用法 | 說明 |
 |---|---|---|
+| `sql` | `sql [-d DB] "SELECT …"`（或 `cat x.sql \| sql`） | 後端的資料庫：預設 `app`，SQLite 檔案在 server 上（`ruos serve --sql NAME=postgres://…` 可以改接 PostgreSQL）；所有機器共用 |
+| `redis` | `redis [-d NAME] COMMAND ARGS...` | 後端的 Redis（`ruos serve --redis cache=redis://127.0.0.1:6379/`） |
 | `curl` | `curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL` | HTTP / HTTPS 請求；輸出可以接管線，`-o` 存成檔案，`-f` 遇到 4xx/5xx 就失敗（`$?` = 22） |
 
 瀏覽器裡的網頁不能直接連別的網站，所以請求由 server（`ruos serve`）代為發出、會自動跟著轉址，最多 10 秒、4 MiB。server 不會連到它自己那邊的網路（loopback、10.*、172.16–31.*、192.168.*、169.254.*、100.64.*、IPv6 的 ULA / link-local），轉址或 DNS 指過去也一樣；要開放某個位址用 `ruos serve --http-allow ADDR:PORT`，整個關掉用 `--no-http`。在系統裡，只有拿到 `http` 這個 capability 的程式能上網：shell 有，`run IMAGE http` 才會交給別的程式。

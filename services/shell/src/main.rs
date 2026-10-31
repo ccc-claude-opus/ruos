@@ -40,6 +40,8 @@ pub struct Sh {
     pub dock: Option<Dock>,
     pub kube: Option<Kube>,
     pub http: Option<Http>,
+    /// All of the backend: programs get parts of it (`run IMAGE sql:app`).
+    pub backend: Option<Store>,
     pub fs: Option<Fs>,
     /// Keeps the overlay alive.
     _ctl: Option<Channel>,
@@ -132,6 +134,7 @@ fn main(_arg: usize) -> i64 {
         dock: ns::get("dock").map(|d| Dock(Channel(d))),
         kube: ns::get("kube").map(|k| Kube(Channel(k))),
         http: Http::get(),
+        backend: ns::get("backend").map(|h| Store(Channel(h))),
         fs,
         _ctl: ctl,
         cwd: String::from("/home"),

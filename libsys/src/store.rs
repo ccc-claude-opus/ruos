@@ -82,6 +82,15 @@ pub const KV_DEL: u8 = 43;
 pub const HTTP_FETCH: u8 = 44;
 /// [HTTP_READ, offset] → [OK, up to 60000 bytes of that body].
 pub const HTTP_READ: u8 = 45;
+/// The backend's databases (`sql:NAME`, `redis:NAME`; ruos serve's backend.rs):
+/// [SQL, name, sql, params (a JSON array), format (`json` | `text`)] → [OK, the answer] / [FAILED, why];
+pub const SQL: u8 = 46;
+/// [REDIS, name, args (a JSON array of strings), format] → [OK, the answer] / [FAILED, why].
+pub const REDIS: u8 = 47;
+/// [GRANT, names, one a line] + a channel end: a new client that may use
+/// those of the backend (`http`, `sql:NAME`, `redis:NAME`; `*` = all) that
+/// this one may.
+pub const GRANT: u8 = 48;
 
 #[derive(Clone, Copy)]
 pub struct Store(pub Channel);
@@ -275,6 +284,16 @@ impl Store {
     pub fn connect(&self) -> Result<Store> {
         let (a, b) = Channel::create()?;
         self.0.write(&[CONNECT], &[b.0])?;
+        Ok(Store(a))
+    }
+
+    /// A client that may use only `names` of the backend (and only those
+    /// this one may): the capability to hand to a program.
+    pub fn grant(&self, names: &[&str]) -> Result<Store> {
+        let (a, b) = Channel::create()?;
+        let mut m = alloc::vec![GRANT];
+        m.extend_from_slice(names.join("\n").as_bytes());
+        self.0.write(&m, &[b.0])?;
         Ok(Store(a))
     }
 }

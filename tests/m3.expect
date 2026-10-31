@@ -13,5 +13,5 @@
 ^\[hello exited with 0\]$
 ^mem: original "hello", clone "HELLO" \(copy on write\)$
 ^nope: unknown command \(type help\)$
-^(/[^ ]* )?\$ exit$
+^(/[^ ]* )?\$ exit( 0)?$
 ^init: shell exited \(0\)$

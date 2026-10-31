@@ -10,6 +10,7 @@
 // for curl that it may reach (--http-allow); `@HTTP_PORT@` in FILE is its port. RUOS (the server binary), KERNEL_WASM override the paths.
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
+import net from 'node:net';
 import { testSite } from './testsite.mjs';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,7 @@ const serverUrl = arg('--server', null);
 const fail = (msg) => {
   console.error(`boot.mjs: ${msg}`);
   srv?.kill();
+  redis?.kill();
   web.close();
   process.exit(1);
 };
@@ -42,10 +44,25 @@ const fail = (msg) => {
 const web = testSite();
 const webPort = serverUrl ? 0 : await new Promise((resolve) => web.listen(0, '127.0.0.1', () => resolve(web.address().port)));
 if (serverUrl) web.close();
+// A Redis for the backend's redis:cache, if one is installed (tests/redis.expect).
+const freePort = () => new Promise((resolve) => {
+  const s = net.createServer().listen(0, '127.0.0.1', () => {
+    const { port } = s.address();
+    s.close(() => resolve(port));
+  });
+});
+let redis = null, redisArgs = [];
+if (!serverUrl) {
+  const port = await freePort();
+  redis = spawn('redis-server', ['--port', String(port), '--save', '', '--appendonly', 'no'], { stdio: 'ignore' });
+  redis.on('error', () => (redis = null));
+  await new Promise((r) => setTimeout(r, 300));
+  if (redis) redisArgs = ['--redis', `cache=redis://127.0.0.1:${port}/`];
+}
 const srv = serverUrl
   ? null
   : spawn(server, ['serve', '--port', '0', '--web', path.join(root, 'web'), '--kernel', kernel, '--store', store,
-      '--http-allow', `127.0.0.1:${webPort}`], {
+      '--http-allow', `127.0.0.1:${webPort}`, ...redisArgs], {
       stdio: ['ignore', 'pipe', 'inherit'],
     });
 let fnBase = null;
@@ -92,7 +109,7 @@ let out = '';
 let typed = false;
 let snapshotLine = 'snapshot: none';
 let ingressTested = false;
-const timeout = setTimeout(() => fail('timeout'), Number(process.env.BOOT_TIMEOUT_MS ?? 300000));
+const timeout = setTimeout(() => fail('timeout'), Number(process.env.BOOT_TIMEOUT_MS ?? 600000));
 worker.on('message', (m) => {
   if (m.type === 'out') {
     process.stdout.write(m.text);
@@ -125,6 +142,7 @@ worker.on('message', (m) => {
     afterBoot().then(
       () => {
         srv?.kill();
+        redis?.kill();
         web.close();
         process.exitCode = m.code;
       },

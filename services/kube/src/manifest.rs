@@ -29,7 +29,8 @@
 //! doc/ingress.md), `[resources]`.
 //!
 //! `uses` entries: a service `NAME` (`svc:NAME`), a Function `fn:NAME`, a
-//! KV namespace `kv:NAME`, or `http` (curl's capability).
+//! KV namespace `kv:NAME`, `http` (curl's capability), or a backend
+//! database `sql:NAME` / `redis:NAME`.
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -122,11 +123,11 @@ pub enum Object {
     Function { name: String, spec: FnSpec },
 }
 
-/// A `uses` entry: NAME, fn:NAME, kv:NAME or http.
+/// A `uses` entry: NAME, fn:NAME, kv:NAME, sql:NAME, redis:NAME or http.
 fn check_use(u: &str) -> Result<(), String> {
     match u.split_once(':') {
-        Some(("fn" | "kv", n)) => check_name(n),
-        Some(_) => Err(format!("bad uses entry {u:?} (NAME, fn:NAME, kv:NAME, http)")),
+        Some(("fn" | "kv" | "sql" | "redis", n)) => check_name(n),
+        Some(_) => Err(format!("bad uses entry {u:?} (NAME, fn:NAME, kv:NAME, sql:NAME, redis:NAME, http)")),
         None => check_name(u),
     }
 }

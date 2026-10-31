@@ -11,7 +11,7 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 cd "$ROOT"
 mkdir -p build
-TIMEOUT=${TIMEOUT:-300}
+TIMEOUT=${TIMEOUT:-600}
 platforms=("$@")
 [ ${#platforms[@]} -eq 0 ] && platforms=(host wasm)
 failed=()
@@ -90,7 +90,7 @@ if printf '%s\n' "${platforms[@]}" | grep -qx wasm; then
     ./run.sh build || failed+=(wasm)
 fi
 cargo build --release --quiet -p ruos -p podimg
-rm -rf build/store/pods build/store/disks build/store/cluster
+rm -rf build/store/pods build/store/disks build/store/cluster build/store/sql
 
 for p in "${platforms[@]}"; do
     printf '%s\n' "${failed[@]:-}" | grep -qx "$p" && continue
@@ -114,6 +114,12 @@ for p in "${platforms[@]}"; do
         continue
     fi
     check_boot1 "$log" "$p" || { failed+=("$p"); continue; }
+    # The backend's Redis: only when one is installed (boot.mjs starts it).
+    if command -v redis-server > /dev/null; then
+        check "$log" redis "$p" || { failed+=("$p"); continue; }
+    else
+        echo "  (no redis-server: the Redis checks are skipped)"
+    fi
     grep -E '^M[0-9]+ OK' "$log" | tr '\n' ' ' | sed 's/^/  boot 1: /; s/ $/\n/'
     log2="build/test-$p-boot2.log"
     if boot "$log2" tests/boot2.input && check "$log2" boot2 "$p"; then

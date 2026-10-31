@@ -42,7 +42,8 @@ macro_rules! println {
     ($($arg:tt)*) => { $crate::console::print(format_args!("{}\n", format_args!($($arg)*))) };
 }
 
-const IN_SIZE: usize = 4096;
+/// Typed-ahead input (a test script, a paste) waits here for the console service.
+const IN_SIZE: usize = 64 * 1024;
 
 struct Input {
     buf: [u8; IN_SIZE],

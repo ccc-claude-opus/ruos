@@ -323,7 +323,7 @@ impl Kube {
                 uses.push((String::from(&k[7..]), t));
             }
         }
-        // Only services: not fn:, kv: or http.
+        // Only services: not fn:, kv:, sql:, redis: or http.
         let mut names: Vec<&str> =
             uses.iter().flat_map(|(_, t)| t.serves.iter().chain(&t.uses).map(String::as_str)).filter(|u| !u.contains(':') && *u != "http").collect();
         names.sort();
@@ -758,7 +758,7 @@ fn main(_arg: usize) -> i64 {
         dock,
         store,
         api,
-        kubelet: Kubelet::new(port, dock, libsys::http::Http::get()),
+        kubelet: Kubelet::new(port, dock, ns::get("backend").map(|h| Store(Channel(h)))),
         control: Controller::new(),
         clients: Vec::new(),
         leader: false,

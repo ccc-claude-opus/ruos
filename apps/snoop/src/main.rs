@@ -1,7 +1,9 @@
 //! snoop: tries to reach everything it can, to show that it can only use
 //! the capabilities it was given. It reports its namespace, then tries every
 //! handle number (a handle is an index into this task's own table, so there
-//! is nothing to guess), then uses what it found.
+//! is nothing to guess), then uses what it found. With a store it also
+//! tries the backend's database `app` through it, which a plain store
+//! client may not use; with `sql:app` it can.
 #![no_std]
 #![no_main]
 
@@ -26,6 +28,20 @@ fn main(_arg: usize) -> i64 {
             Err(e) => println!("snoop: the store said {:?}", e),
         },
         None => println!("snoop: no store: I cannot see a single image"),
+    }
+    if let Some(s) = ns::get("store") {
+        match libsys::sql::Sql::with(Store(Channel(s)), "app").query("SELECT 1", "") {
+            Ok(Ok(_)) => println!("snoop: the store let me use the database app"),
+            Ok(Err(why)) => println!("snoop: the database app through the store: {why}"),
+            Err(e) => println!("snoop: the database app through the store: {:?}", e),
+        }
+    }
+    if let Some(db) = libsys::sql::Sql::get("app") {
+        match db.query("SELECT 6 * 7 AS answer", "") {
+            Ok(Ok(j)) => println!("snoop: sql:app answered {j}"),
+            Ok(Err(why)) => println!("snoop: sql:app said {why}"),
+            Err(e) => println!("snoop: sql:app: {:?}", e),
+        }
     }
     match ns::get("console") {
         Some(c) => cprintln!(Console(Channel(c)), "snoop: written through my console capability"),

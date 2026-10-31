@@ -49,6 +49,9 @@ kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
 函式（serverless：請求來了才啟動，閒置就收掉；kube apply 一個 kind = \"Function\"）
   fn call NAME [TEXT...]   fn ls（= kube get fn）
   kv ls NS [PREFIX]   kv get NS KEY   kv put NS KEY VALUE...   kv rm NS KEY（KV namespace）
+後端的資料庫（在桌機的 ruos serve：SQLite、PostgreSQL、Redis）
+  sql [-d DB] \"SELECT …\"（預設 DB 是 app；也可以接管線：cat x.sql | sql）
+  redis [-d NAME] COMMAND ARGS...（預設 NAME 是 cache；要 ruos serve --redis cache=redis://…）
 網路（由 server 代為連線；要有 http 這個 capability）
   curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL
 ";
@@ -558,6 +561,8 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
         "curl" => curl(sh, &argv[1..]),
         "fn" => sh.func(&argv[1..]),
         "kv" => sh.kv(&argv[1..]),
+        "sql" => sh.sql(&argv[1..], input),
+        "redis" => sh.redis(&argv[1..]),
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -651,7 +656,7 @@ fn run_image(sh: &Sh, argv: &[String]) {
             }),
             "store" => sh.store.connect().ok().map(|s| s.0.0),
             "fs" => sh.fs.and_then(|fs| fs.connect().ok()).map(|f| f.0.0),
-            "http" => sh.http.and_then(|h| h.connect().ok()).map(|h| h.0.0),
+            n if n == "http" || n.starts_with("sql:") || n.starts_with("redis:") => sh.backend.and_then(|b| b.grant(&[n]).ok()).map(|s| s.0.0),
             n => ns::get(n).and_then(|h| h.dup(Rights::ALL).ok()),
         };
         match h {
@@ -755,6 +760,48 @@ impl Sh {
             }
             [l] if l == "ls" => self.kube(&[String::from("get"), String::from("fn")]),
             _ => Err(String::from("fn call NAME [TEXT...] | fn ls")),
+        }
+    }
+
+    /// `-d NAME` and the rest.
+    fn backend_args<'a>(argv: &'a [String], default: &'a str) -> (&'a str, &'a [String]) {
+        match argv {
+            [d, n, rest @ ..] if d == "-d" => (n.as_str(), rest),
+            rest => (default, rest),
+        }
+    }
+
+    /// sql [-d DB] STATEMENT: a database of the backend, as a text table.
+    fn sql(&mut self, argv: &[String], input: Option<Vec<u8>>) -> Out {
+        let (db, rest) = Self::backend_args(argv, "app");
+        let stmt = if rest.is_empty() { text(&input.unwrap_or_default()) } else { rest.join(" ") };
+        if stmt.trim().is_empty() {
+            return Err(String::from("sql [-d DB] \"STATEMENT\" (or SQL on the input)"));
+        }
+        let b = self.backend.clone().ok_or("this shell has no backend")?;
+        match libsys::sql::Sql::with(b, db).query_text(&stmt).map_err(err("sql"))? {
+            Ok(t) => Ok(t.into_bytes()),
+            Err(why) => {
+                self.status = 1;
+                Err(why)
+            }
+        }
+    }
+
+    /// redis [-d NAME] COMMAND ARGS…: a Redis of the backend.
+    fn redis(&mut self, argv: &[String]) -> Out {
+        let (name, rest) = Self::backend_args(argv, "cache");
+        if rest.is_empty() {
+            return Err(String::from("redis [-d NAME] COMMAND ARGS..."));
+        }
+        let b = self.backend.clone().ok_or("this shell has no backend")?;
+        let args: Vec<&str> = rest.iter().map(String::as_str).collect();
+        match libsys::redis::Redis::with(b, name).cmd_text(&args).map_err(err("redis"))? {
+            Ok(t) => Ok(t.into_bytes()),
+            Err(why) => {
+                self.status = 1;
+                Err(why)
+            }
         }
     }
 
@@ -973,7 +1020,7 @@ const BUILTINS: &[&str] = &[
     "help", "echo", "pwd", "cd", "ls", "cat", "tree", "stat", "mkdir", "rmdir", "rm", "cp", "mv", "touch", "save", "head", "tail", "wc",
     "grep", "sort", "uniq", "cut", "tr", "sed", "seq", "tee", "basename", "dirname", "printf", "env", "set", "export", "unset", "read",
     "find", "rev", "tac", "nl", "which", "type", "sh", ".", "source", "test", "[", "true", "false", "date", "uptime", "clear", "history",
-    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl", "fn", "kv",
+    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl", "fn", "kv", "sql", "redis",
 ];
 
 /// test / [ : -e -f -d -s -z -n, = !=, -eq -ne -lt -le -gt -ge, !.

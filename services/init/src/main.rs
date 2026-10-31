@@ -1,6 +1,6 @@
 //! init: the first task. Handle 0 is the serial port, 1 the boot pack, 2
 //! the root quota; then, with a server, the server connection and ingress. Starts the store service from the pack, runs the
-//! kernel tests, then console, dock, kube and a shell (with `http`, the
+//! kernel tests, then console, dock, kube and a shell (with `backend`, the
 //! store's web client); ends with the shell.
 #![no_std]
 #![no_main]
@@ -27,7 +27,7 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
 }
 
 /// The store service, started straight from the pack: the store, its `web`
-/// client (the http capability, for the shell) and the ingress channel
+/// client (the backend capability: http, sql:NAME, redis:NAME) and the ingress channel
 /// from the server (for kube).
 fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>)> {
     let size = pack_mem.size().ok()?;
@@ -104,16 +104,25 @@ fn main(_arg: usize) -> i64 {
         return 1;
     }
     let Ok(ks) = store.connect() else { return 1 };
-    // kube hands `http` on to the programs that use it.
-    let Ok(kh) = libsys::http::Http(web).connect() else { return 1 };
-    let mut ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("http", kh.0.0).add("client", kube_srv.0);
+    // kube hands parts of the backend (http, sql:NAME, redis:NAME) to the programs that use them.
+    let backend = Store(web);
+    let Ok(kb) = backend.connect() else { return 1 };
+    let mut ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("backend", kb.0.0).add("client", kube_srv.0);
     if let Some(i) = ingress {
         ns = ns.add("ingress", i.0);
     }
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
-    let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0).add("http", web.0);
+    // The shell has all of the backend; `http` alone is curl's.
+    let Ok(sh_http) = backend.grant(&["http"]) else { return 1 };
+    let ns = Namespace::new()
+        .add("console", c)
+        .add("store", s.0.0)
+        .add("dock", dock.0)
+        .add("kube", kube.0)
+        .add("backend", web.0)
+        .add("http", sh_http.0.0);
     let shell = match store.spawn("shell", &ns, None) {
         Ok(t) => t,
         Err(e) => {

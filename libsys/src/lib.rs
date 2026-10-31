@@ -29,6 +29,8 @@ pub mod ipc;
 pub mod kube;
 pub mod kv;
 pub mod ns;
+pub mod redis;
+pub mod sql;
 pub mod store;
 pub mod svc;
 pub mod wire;

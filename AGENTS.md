@@ -25,7 +25,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 
 - 核心：`fdt`（DTB；`dtb.rs` 只是包一層成核心用的小 API）、`talc` + `lock_api`（heap；鎖是會關中斷的 `RawIrqLock`）、`rand_chacha`（核心亂數）。
 - 使用者空間：`talc` + `spinning_top`（libsys heap；`Grow` source 在用完時 `memory.grow`）、`blake3`（`pure`）、`toml` + `serde`（Podfile 與 kube 的 manifest）。
-- 主機：`tokio` + `axum`（ruos serve 的 HTTP 與 WebSocket；`futures-util` 拆 WebSocket 的讀寫）、`ureq`（podimg 讀 registry；ruos serve 代為發 HTTP，rustls）。
+- 主機：`rusqlite`（bundled SQLite）、`tokio-postgres`、`redis`、`serde_json`（後端服務）、`tokio` + `axum`（ruos serve 的 HTTP 與 WebSocket；`futures-util` 拆 WebSocket 的讀寫）、`ureq`（podimg 讀 registry；ruos serve 代為發 HTTP，rustls）。
 - 網頁不用框架：原生 ES module（`web/*.js`），SVG 自己畫。
 - 仍是自己寫的，因為沒有合用的套件：核心本身、物件庫的格式與 pack、各服務的協定（store、fs、dock、console、remote、kube）。
 
@@ -64,7 +64,15 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）；4. 前端 WASI preview1；5. 網站範例、課程、發布 2.0.0。
+- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1；5. 網站範例、課程、發布 2.0.0。
+
+## 後端服務（v2.0 第 3 步）
+
+- ruos serve 的 `backend.rs`：`sql:NAME` 預設是 SQLite（`rusqlite`，SQLite 編進 ruos serve；檔案 `STORE/sql/NAME.db`，第一次用時建），`--sql NAME=sqlite:PATH` 或 `--sql NAME=postgres://…`（`tokio-postgres`，在 `spawn_blocking` 裡以 `Handle::block_on`；值一律是文字（simple query），還不支援參數；這台機器沒有 PostgreSQL，**沒有測過**）。`redis:NAME` 要 `--redis NAME=redis://HOST:PORT/`（`redis` crate，同步連線，斷了下次重連）。資料庫在 server 上，所有機器共用。
+- remote 的 `SQL [name, sql, params(JSON 陣列), format]` → `{"columns","rows"}` / `{"changed","last_id"}`，format `text` 時是文字表格；`REDIS [name, args(JSON 陣列), format]`。
+- **capability**：store 記每個 client 的 grants（`Grants`：`*`、`http`、`sql:NAME`、`redis:NAME`）。`web` 的 client 是 `*`；`CONNECT` 繼承；`GRANT names` + channel 端 = 只有那些（且是自己有的）的新 client（`Store::grant`）。HTTP_* / SQL / REDIS 先檢查 `needs()`，沒有就回 `no X capability`。init 把 `web` 給 shell 當 `backend`（全部）與 `http`（只有 http）；kube 拿 `backend` 的 CONNECT，kubelet 依 `uses` 給 pod / 函式 `Store::grant(["sql:app"])` 等；shell 的 `run IMAGE sql:app` 也是 grant。
+- libsys `sql.rs`（`Sql::get(name)` = 名稱空間的 `sql:NAME`；`Sql::with(store, name)`；`query(sql, params_json)`、`query_text`）、`redis.rs`（`Redis::get`、`cmd(&[…])`、`cmd_text`）。shell：`sql [-d DB] STATEMENT`（預設 `app`，也接管線）、`redis [-d NAME] CMD ARGS`（預設 `cache`）。snoop 會試著經自己的 `store` 用 `app`（被拒），有 `sql:app` 就查一次。
+- 測試：`tests/m24.expect`（SQL、snoop 的 capability、另一個資料庫）；boot.mjs 有 `redis-server` 就起一個（隨機埠）給 `--redis cache=…`，test.sh 那時才比對 `tests/redis.expect`。test.sh 每次清掉 `build/store/sql`，逾時預設 600 s。
 
 ## kube（M17）
 
@@ -193,7 +201,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - **物件與 handle**（`object.rs`）：`Object::{Task, Thread, Channel, Port, Memory, Quota, Serial}`，`Handle { obj, rights }`，`HandleTable` 的 handle 值 = slot 索引（關閉後可重用），每個 task 上限 1024。`dup` 只能縮小 rights（需 DUP）、`wait` 需 WAIT、`spawn` 搬移的 handle 需 TRANSFER、`kill` 需 MANAGE。
 - **task / thread**（`task.rs`）：最後一個 thread 結束 → task 結束；task 結束 → 殺掉其餘 thread、清空 handle 表、喚醒等待者。task 1 = init，結束時通知 selftest 關機。instance trap → `task::fault` 印 `fault: task N (name) ...: killed`，exit code = `Killed`。
 - **signals**（`signal.rs`）：Task / Thread（TERMINATED）、Channel（READABLE、WRITABLE、PEER_CLOSED）、Serial（READABLE）各有 `SignalCell`；觀察者是一次性的 `Observer::Thread`（`WAIT_ONE`）或 `Observer::Port`（`PORT_BIND`），level triggered。阻塞時 `sched::block_current` 回傳 wait generation（`wgen`），喚醒與逾時都要對得上，所以過期的觀察者不會吵醒後來別的等待。
-- **Channel**（`channel.rs`）：一對端點，訊息 = bytes（≤ 64 KB）+ handles（≤ 16，需 TRANSFER，不能把端點送進自己）；端點最後一個 handle 關閉時對端得到 PEER_CLOSED。remote 端點（`Channel::remote(i)`）的另一端是 host，只能送 bytes。**Port**（`port.rs`）：封包佇列 {key, signals, data}。**Serial**（`serial.rs`）：核心主控台輸入環（4 KB）的物件，只給 init。
+- **Channel**（`channel.rs`）：一對端點，訊息 = bytes（≤ 64 KB）+ handles（≤ 16，需 TRANSFER，不能把端點送進自己）；端點最後一個 handle 關閉時對端得到 PEER_CLOSED。remote 端點（`Channel::remote(i)`）的另一端是 host，只能送 bytes。**Port**（`port.rs`）：封包佇列 {key, signals, data}。**Serial**（`serial.rs`）：核心主控台輸入環（`console.rs` 的 `IN_SIZE`，64 KiB：測試腳本一次全部送進來，超過的 byte 會被丟掉——曾因 4 KB 而讓 4.4 KB 的腳本在中間停住）的物件，只給 init。
 - **Memory**（`memory.rs`）：頁面以 `Arc<Page>` 計數（heap 區塊）；`clone_cow` 共用頁面，寫入前 `make_private` 複製。linear memory 不能互相別名，`MEMORY_MAP` 回 `NotSupported`，只能 `MEMORY_READ/WRITE`。
 - **syscall**（`syscall.rs`）：`dispatch` 回傳 `Sys::Ret(v)` 或 `Sys::Block`；阻塞的 thread 由喚醒者以 `sched::wake(t, v)` 給結果（host 的 `thread_resume`）。
 - **WASM host**（`web/kernel_host.js`，瀏覽器 Worker 與 Node worker_threads 共用）：imports `env.console_write / timer_start / now_ms / shutdown / task_create / task_destroy / thread_start / thread_resume / thread_kill / user_read / user_write`；exports `kernel_boot / kernel_irq / kernel_syscall / kernel_fault / kernel_scratch / kernel_dtb_buf`。`shutdown` 丟 `KernelExit` 讓 wasm 堆疊回捲，所有進入核心的呼叫經 `enter()`。

@@ -12,7 +12,8 @@
 //!   block device), `STORE/disks/MACHINE.img`, 16 MiB;
 //! - KV_HELLO / KV_LIST / KV_PUT / KV_DEL: the cluster's records (cluster.rs);
 //! - HTTP_FETCH / HTTP_READ: an HTTP request made here (http.rs, for curl),
-//!   its body kept for the session and read in parts.
+//!   its body kept for the session and read in parts;
+//! - SQL / REDIS: the backend's databases (backend.rs).
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -45,6 +46,8 @@ const KV_DEL: u8 = 43;
 const HTTP_FETCH: u8 = 44;
 const HTTP_READ: u8 = 45;
 const PART: usize = 60000;
+const SQL: u8 = 46;
+const REDIS: u8 = 47;
 const SECTOR: u64 = 512;
 const DISK_SIZE: u64 = 16 << 20;
 
@@ -415,6 +418,24 @@ impl Session {
                 let part = body.get(off..).map(|b| &b[..b.len().min(PART)]).unwrap_or(&[]);
                 Ok(reply(OK, part))
             }
+            // [SQL, name, sql, params (JSON), format] → [OK, JSON or a text table]
+            SQL => match decode(msg, 4) {
+                Some((_, f)) => Ok(match crate::backend::sql(&self.store, text(f[0]), text(f[1]), text(f[2])) {
+                    Ok(j) if text(f[3]) == "text" => reply(OK, crate::backend::as_text(&j).as_bytes()),
+                    Ok(j) => reply(OK, j.to_string().as_bytes()),
+                    Err(m) => reply(FAILED, m.as_bytes()),
+                }),
+                None => Ok(reply(FAILED, b"bad request")),
+            },
+            // [REDIS, name, args (JSON array), format] → [OK, JSON or text]
+            REDIS => match decode(msg, 3) {
+                Some((_, f)) => Ok(match crate::backend::redis(text(f[0]), text(f[1])) {
+                    Ok(j) if text(f[2]) == "text" => reply(OK, crate::backend::redis_text(&j).as_bytes()),
+                    Ok(j) => reply(OK, j.to_string().as_bytes()),
+                    Err(m) => reply(FAILED, m.as_bytes()),
+                }),
+                None => Ok(reply(FAILED, b"bad request")),
+            },
             _ => Ok(reply(FAILED, b"unknown request")),
         };
         r.unwrap_or_else(|e| reply(FAILED, e.to_string().as_bytes()))

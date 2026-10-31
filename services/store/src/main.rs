@@ -1,5 +1,6 @@
 //! store: the object store. Its namespace has `pack` (the boot pack), a
-//! first `client`, `web` (clients from it may make HTTP requests) and,
+//! first `client`, `web` (the backend capability: its clients may use every
+//! backend service; GRANT makes clients that may use only some) and,
 //! with a server, `remote` (the kernel's channel to ruos serve). It serves
 //! programs, objects and refs, and the pods' writable layers: in memory, or
 //! on the server when there is a remote. New objects and refs go to the
@@ -355,7 +356,7 @@ impl Store<'_> {
             // The cluster's records (kube) are on the server.
             KV_HELLO | KV_LIST | KV_PUT | KV_DEL => self.remote_call(msg),
             // Only from clients with the http capability (checked in main).
-            HTTP_FETCH | HTTP_READ => self.remote_call(msg),
+            HTTP_FETCH | HTTP_READ | SQL | REDIS => self.remote_call(msg),
             UP_READ_AT => {
                 let a = f(4);
                 let (off, len) = (num(&a[2]), num(&a[3]).min(MAX_INLINE));
@@ -427,6 +428,27 @@ impl Store<'_> {
     }
 }
 
+/// What of the backend a client may use: `*`, `http`, `sql:NAME`, `redis:NAME`.
+#[derive(Clone, Default)]
+struct Grants(Vec<String>);
+
+impl Grants {
+    fn allows(&self, what: &str) -> bool {
+        self.0.iter().any(|g| g == "*" || g == what)
+    }
+}
+
+/// The capability a request needs, if it is for the backend.
+fn needs(msg: &[u8]) -> Option<String> {
+    let name = |m: &[u8]| Some(String::from(text(m.get(1..)?.split(|&c| c == 0).next()?)));
+    match msg.first()? {
+        &HTTP_FETCH | &HTTP_READ => Some(String::from("http")),
+        &SQL => Some(format!("sql:{}", name(msg)?)),
+        &REDIS => Some(format!("redis:{}", name(msg)?)),
+        _ => None,
+    }
+}
+
 fn main(_arg: usize) -> i64 {
     let Some(mem) = ns::get("pack").map(Memory) else { return 6 };
     let Ok(size) = mem.size() else { return 1 };
@@ -483,35 +505,44 @@ fn main(_arg: usize) -> i64 {
         }
     }
     let Ok(port) = Port::create() else { return 4 };
-    // (channel, may it make HTTP requests): clients that came from `web`
-    // (and the clients they CONNECT) have the http capability.
-    let mut clients: Vec<Option<(Channel, bool)>> = Vec::new();
-    let add = |clients: &mut Vec<Option<(Channel, bool)>>, c: Channel, web: bool| {
-        clients.push(Some((c, web)));
+    // (channel, what of the backend it may use): `web`'s clients may use
+    // all of it (`*`), a client made by CONNECT what its maker may, one
+    // made by GRANT what it asked for and its maker may (libsys::store).
+    let mut clients: Vec<Option<(Channel, Grants)>> = Vec::new();
+    let add = |clients: &mut Vec<Option<(Channel, Grants)>>, c: Channel, g: Grants| {
+        clients.push(Some((c, g)));
         let _ = port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, clients.len() as u64 - 1);
     };
     if let Some(c) = ns::get("client") {
-        add(&mut clients, Channel(c), false);
+        add(&mut clients, Channel(c), Grants::default());
     }
     if let Some(c) = ns::get("web") {
-        add(&mut clients, Channel(c), true);
+        add(&mut clients, Channel(c), Grants(alloc::vec![String::from("*")]));
     }
     let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
     loop {
         let Ok(p) = port.wait(u64::MAX) else { return 5 };
         let i = p.key as usize;
-        let Some((c, web)) = clients[i] else { continue };
+        let Some((c, grants)) = clients[i].clone() else { continue };
         let mut hs = [Handle(0); 1];
         let mut alive = true;
         loop {
             match c.read(&mut buf, &mut hs) {
                 Ok((n, nh)) => {
                     if buf[0] == CONNECT && nh == 1 {
-                        add(&mut clients, Channel(hs[0]), web);
+                        add(&mut clients, Channel(hs[0]), grants.clone());
                         continue;
                     }
-                    if matches!(buf[0], HTTP_FETCH | HTTP_READ) && !web {
-                        let _ = c.write(&reply(FAILED, b"no http capability"), &[]);
+                    if buf[0] == GRANT && nh == 1 {
+                        let asked = text(&buf[1..n]);
+                        let g = Grants(asked.lines().filter(|w| grants.allows(w)).map(String::from).collect());
+                        add(&mut clients, Channel(hs[0]), g);
+                        continue;
+                    }
+                    if let Some(need) = needs(&buf[..n])
+                        && !grants.allows(&need)
+                    {
+                        let _ = c.write(&reply(FAILED, format!("no {need} capability").as_bytes()), &[]);
                         continue;
                     }
                     let msg = buf[..n].to_vec();

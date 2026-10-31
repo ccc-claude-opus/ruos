@@ -175,4 +175,22 @@ kube describe site | grep -i cold
 kv get visits count
 kube delete site
 kube delete hello
-exit
+sql "CREATE TABLE notes (id INTEGER PRIMARY KEY, who TEXT, body TEXT, n INTEGER)"
+sql "INSERT INTO notes (who, body, n) VALUES ('ann', 'hi there', 3), ('bob', 'hello', 5), ('cy', 'it''s me', 1)"
+sql "SELECT * FROM notes ORDER BY n DESC"
+sql "SELECT who, n * 2 AS twice FROM notes WHERE n > 1 AND body LIKE 'h%'"
+echo "SELECT COUNT(*), SUM(n) FROM notes" | sql
+sql "SELECT * FROM nope"
+run snoop console store
+run snoop console sql:app
+sql -d other "CREATE TABLE t (x INTEGER)"
+sql -d other "SELECT name FROM sqlite_master"
+redis SET greeting hello
+redis GET greeting
+redis INCR hits
+redis INCR hits
+redis RPUSH list a b c
+redis LRANGE list 0 -1
+redis GET nothing
+redis -d nosuch PING
+exit 0

@@ -28,6 +28,10 @@
 //! The WebSockets and the ingress only take requests from this origin
 //! (pages elsewhere, such as Functions' own pages, cannot use them).
 //!
+//! Backend services (backend.rs), each a capability in the OS: `sql:NAME`
+//! (SQLite in `STORE/sql/NAME.db`, or `--sql NAME=URL`), `redis:NAME`
+//! (`--redis NAME=URL`).
+//!
 //! Functions (kube's `expose = true`) on their own port, `--fn-port N`
 //! (default: the port + 10), so their pages are another origin:
 //!   ANY /fn/NAME/PATH       the Function's answer (doc/ingress.md)
@@ -52,6 +56,7 @@ use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 
 mod assets;
+mod backend;
 mod cluster;
 mod http;
 mod ingress;
@@ -71,7 +76,8 @@ struct Config {
 const USAGE: &str = "usage:
   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
-             [--fn-port N] [--no-http] [--http-allow ADDR:PORT]...";
+             [--fn-port N] [--no-http] [--http-allow ADDR:PORT]...
+             [--sql NAME=sqlite:PATH|postgres://…]... [--redis NAME=redis://HOST:PORT/]...";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -86,6 +92,7 @@ fn main() {
     let mut open = true;
     let mut http = http::Settings { enabled: true, allow: Vec::new() };
     let mut fn_port = None;
+    let mut services = backend::Settings { sql: Vec::new(), redis: Vec::new() };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| usage(&format!("{a} needs a value")));
@@ -95,6 +102,12 @@ fn main() {
             "--web" if cmd == "serve" => cfg.web = Some(PathBuf::from(val())),
             "--kernel" if cmd == "serve" => cfg.kernel = Some(PathBuf::from(val())),
             "--no-http" => http.enabled = false,
+            "--sql" | "--redis" => {
+                let v = val();
+                let Some((n, u)) = v.split_once('=') else { usage(&format!("{a} NAME=URL")) };
+                let l = if a == "--sql" { &mut services.sql } else { &mut services.redis };
+                l.push((n.to_string(), u.to_string()));
+            }
             "--fn-port" => fn_port = Some(val().parse().unwrap_or_else(|_| usage("bad --fn-port"))),
             "--http-allow" => http.allow.push(val().parse().unwrap_or_else(|_| usage("bad --http-allow (ADDR:PORT)"))),
             "--store" if cmd == "serve" => cfg.store = Some(PathBuf::from(val())),
@@ -104,6 +117,7 @@ fn main() {
         }
     }
     http::configure(http);
+    backend::configure(services);
     let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
         eprintln!("ruos: tokio: {e}");
         std::process::exit(1)

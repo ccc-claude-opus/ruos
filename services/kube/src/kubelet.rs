@@ -8,13 +8,14 @@
 //!
 //! What a program `uses` becomes a name in its namespace: a service X
 //! `svc:X`, a Function `fn:X`, a KV namespace `kv:X` (the kubelet keeps the
-//! other end of each), and `http` (a new client of kube's own).
+//! other end of each); `http`, `sql:X` and `redis:X` are parts of the
+//! backend (a store client granted only that, from kube's `backend`).
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use libsys::dock::Dock;
-use libsys::http::Http;
+use libsys::store::Store;
 use libsys::{Channel, Error, Handle, Port, clock_ns, signal, svc};
 
 use crate::api::Api;
@@ -128,8 +129,8 @@ pub struct Kubelet {
     /// kubelet's ends of programs' `listen` and `svc:` / `fn:` / `kv:` channels.
     pub(crate) listens: Vec<Option<Channel>>,
     pub(crate) links: Vec<Option<(Channel, Bind)>>,
-    /// kube's `http` (programs that use it get a new client).
-    pub(crate) http: Option<Http>,
+    /// kube's `backend`: programs get parts of it (`Store::grant`).
+    pub(crate) backend: Option<Store>,
     /// This node's Function instances, and what each Function did here.
     pub(crate) insts: Vec<crate::funcs::Inst>,
     pub(crate) fns: Vec<crate::funcs::FnStat>,
@@ -172,14 +173,14 @@ pub fn revision(api: &Api, d: &str, rev: u32) -> Option<(String, Template)> {
 }
 
 impl Kubelet {
-    pub fn new(port: Port, dock: Dock, http: Option<Http>) -> Kubelet {
+    pub fn new(port: Port, dock: Dock, backend: Option<Store>) -> Kubelet {
         Kubelet {
             port,
             dock,
             pods: Vec::new(),
             listens: Vec::new(),
             links: Vec::new(),
-            http,
+            backend,
             insts: Vec::new(),
             fns: Vec::new(),
             fn_next: 0,
@@ -199,10 +200,10 @@ impl Kubelet {
     pub(crate) fn bindings(&mut self, uses: &[String]) -> (String, Vec<Handle>, Vec<usize>) {
         let (mut cmd, mut handles, mut links) = (String::new(), Vec::new(), Vec::new());
         for u in uses {
-            if u == "http" {
-                if let Some(h) = self.http.and_then(|h| h.connect().ok()) {
-                    cmd += " --handle http";
-                    handles.push(h.0.0);
+            if u == "http" || u.starts_with("sql:") || u.starts_with("redis:") {
+                if let Some(s) = self.backend.and_then(|b| b.grant(&[u.as_str()]).ok()) {
+                    cmd += &format!(" --handle {u}");
+                    handles.push(s.0.0);
                 }
                 continue;
             }
