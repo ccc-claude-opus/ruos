@@ -108,7 +108,7 @@ run_qemu() { # platform log input
         sleep 0.02
     done
     # The guest reaches the server on the host as 10.0.2.2:PORT.
-    sed "s/@PODSRV_PORT@/$PODSRV_PORT/g" "${INPUT:-$input}" >&3
+    sed "s/@PODSRV_PORT@/$PODSRV_PORT/g; s/@HTTP_PORT@/$HTTP_PORT/g" "${INPUT:-$input}" >&3
     wait $pid
     status=$?
     exec 3>&-
@@ -138,15 +138,33 @@ done
 cargo build --release --quiet -p ruos -p podimg
 rm -rf build/store/pods build/store/disks build/store/cluster
 
-PODSRV_PID=
-cleanup() { [ -n "$PODSRV_PID" ] && kill "$PODSRV_PID" 2>/dev/null; }
+PODSRV_PID= TESTSITE_PID=
+cleanup() {
+    [ -n "$PODSRV_PID" ] && kill "$PODSRV_PID" 2>/dev/null
+    [ -n "$TESTSITE_PID" ] && kill "$TESTSITE_PID" 2>/dev/null
+}
 trap cleanup EXIT
-if printf '%s\n' "${platforms[@]}" | grep -Eq '^(riscv64|aarch64|aarch64-el2)$'; then
-    target/release/ruos serve --port 0 --web web --store build/store > build/podsrv.log 2>&1 &
+# The QEMU machines' server (with a fresh cluster for each platform).
+start_podsrv() {
+    [ -n "$PODSRV_PID" ] && kill "$PODSRV_PID" 2>/dev/null && wait "$PODSRV_PID" 2>/dev/null
+    rm -rf build/store/cluster
+    target/release/ruos serve --port 0 --web web --store build/store --http-allow "127.0.0.1:$HTTP_PORT" > build/podsrv.log 2>&1 &
     PODSRV_PID=$!
+    PODSRV_PORT=
     for _ in $(seq 600); do
         PODSRV_PORT=$(sed -n 's/.*listening on http:\/\/127.0.0.1:\([0-9]*\).*/\1/p' build/podsrv.log)
         [ -n "$PODSRV_PORT" ] && break
+        sleep 0.05
+    done
+}
+
+if printf '%s\n' "${platforms[@]}" | grep -Eq '^(riscv64|aarch64|aarch64-el2)$'; then
+    # What curl in the machines fetches (tests/m21.expect); the server may reach it.
+    node web/test/testsite.mjs > build/testsite.log 2>&1 &
+    TESTSITE_PID=$!
+    for _ in $(seq 600); do
+        HTTP_PORT=$(sed -n 's/^testsite: listening on \([0-9]*\)/\1/p' build/testsite.log)
+        [ -n "$HTTP_PORT" ] && break
         sleep 0.05
     done
 fi
@@ -164,6 +182,11 @@ for p in "${platforms[@]}"; do
         continue
     fi
     rm -f "build/disk-$p.img" build/store/disks/test.img
+    # Each platform is a cluster of its own: no records from the one before.
+    case $p in
+        riscv64|aarch64|aarch64-el2) start_podsrv ;;
+        wasm) rm -rf build/store/cluster ;;
+    esac
     # wasm: the server connection drops once, the kernel host reconnects.
     DROP=50 boot "$p" "$log" tests/m3.input
     status=$?

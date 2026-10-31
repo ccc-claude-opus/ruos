@@ -469,7 +469,7 @@ fn main(_arg: usize) -> i64 {
         (Some(c), _) => Some(Remote::Chan(c)),
         (None, Some(n)) => {
             let (ip, port) = REGISTRY;
-            match Net(Channel(n)).connect(ip, port).and_then(|s| WebSocket::open(s, "registry", "/v1/remote")) {
+            match Net(Channel(n)).connect(ip, port).and_then(|s| WebSocket::open(s, "registry", &format!("/v1/remote?machine={}", libsys::ARCH))) {
                 Ok(ws) => {
                     println!("store: registry at {}.{}.{}.{}:{} over the network", ip[0], ip[1], ip[2], ip[3], port);
                     Some(Remote::Ws(RefCell::new(ws)))

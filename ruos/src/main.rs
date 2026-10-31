@@ -275,7 +275,9 @@ fn own_origin(req: &Request) -> bool {
     if get("Sec-Fetch-Site").is_some_and(|s| s != "same-origin" && s != "none") {
         return false;
     }
-    match (get("Origin"), get("Host")) {
+    // Programs that are not browsers send none (or an empty one: the native
+    // machines' WebSocket client).
+    match (get("Origin").filter(|o| !o.is_empty()), get("Host")) {
         (None, _) => true,
         (Some(o), Some(h)) => o == format!("http://{h}") || o == format!("https://{h}"),
         (Some(_), None) => false,

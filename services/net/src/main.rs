@@ -252,6 +252,10 @@ fn main(_arg: usize) -> i64 {
                 // The other side is done (or it is all over): so are we.
                 let gone = matches!(s.state(), tcp::State::Closed | tcp::State::TimeWait) || (!s.may_recv() && k.client.is_none());
                 if gone && (k.chan_closed || !s.may_recv()) {
+                    // Not asked for: the connection broke (a reset, or the timeout).
+                    if !k.chan_closed {
+                        libsys::println!("net: connection to {} lost ({})", s.remote_endpoint().map(|e| alloc::format!("{e}")).unwrap_or_default(), s.state());
+                    }
                     let _ = k.chan.close();
                     sockets.remove(k.sock);
                     *slot = None;

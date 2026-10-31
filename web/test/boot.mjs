@@ -10,6 +10,7 @@
 // for curl that it may reach (--http-allow); `@HTTP_PORT@` in FILE is its port. RUOS (the server binary), KERNEL_WASM override the paths.
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
+import { testSite } from './testsite.mjs';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -38,22 +39,7 @@ const fail = (msg) => {
 };
 
 // What curl in the machine fetches.
-const web = http.createServer((req, res) => {
-  let body = '';
-  req.on('data', (d) => (body += d));
-  req.on('end', () => {
-    const send = (status, text, headers = {}) => {
-      res.writeHead(status, { 'Content-Type': 'text/plain', ...headers });
-      res.end(text);
-    };
-    if (req.url === '/hello') send(200, 'hello from the test web server\n');
-    else if (req.url === '/echo') send(200, `got ${req.method} ${body}\n`);
-    else if (req.url === '/big') send(200, Array.from({ length: 20000 }, (_, i) => `line ${i + 1}\n`).join(''));
-    // A redirect to the server's own machine: refused like a direct request.
-    else if (req.url === '/redirect') send(302, '', { Location: 'http://127.0.0.1:1/' });
-    else send(404, 'not here\n');
-  });
-});
+const web = testSite();
 const webPort = serverUrl ? 0 : await new Promise((resolve) => web.listen(0, '127.0.0.1', () => resolve(web.address().port)));
 if (serverUrl) web.close();
 const srv = serverUrl

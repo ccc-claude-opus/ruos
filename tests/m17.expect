@@ -1,22 +1,23 @@
 ^NAME +SPACE +READY +REV +IMAGE +AGE$
 ^deployment/web created$
-^web-1 +[01]/1 +Running +0 +1 +[0-9]+s +test$
-^web-2 +[01]/1 +Running +0 +1 +[0-9]+s +test$
+^web-1 +[01]/1 +Running +0 +1 +[0-9]+s +[a-z0-9-]+$
+^web-2 +[01]/1 +Running +0 +1 +[0-9]+s +[a-z0-9-]+$
 ^stopped web-1$
-^web-1 +[01]/1 +Running +1 +1 +[0-9]+s +test$
+^web-1 +[01]/1 +Running +1 +1 +[0-9]+s +[a-z0-9-]+$
 ^deployment/web scaled to 1$
 ^deployment/flaky created$
 ^Replicas: +1 wanted, [01] ready$
-^  [0-9]+s +Started pod flaky-1 on test$
+^  [0-9]+s +Started pod flaky-1 on [a-z0-9-]+$
 ^  [0-9]+s +Pod flaky-1 exited with 1; restarting in 1s$
 ^  [0-9]+s +Restarted pod flaky-1 \(1\)$
 ^space/small created$
 ^deployment/crowd created$
-^crowd-1 +[01]/1 +Running +0 +1 +[0-9]+s +test$
-^crowd-3 +0/1 +Pending +0 +1 +[0-9]+s +test$
+^crowd-1 +[01]/1 +Running +0 +1 +[0-9]+s +[a-z0-9-]+$
+^crowd-3 +0/1 +Pending +0 +1 +[0-9]+s +[a-z0-9-]+$
 ^small +[0-9.]+/32\.0 MiB +2/2$
-^  crowd-3 +rev 1 +restarts 0 +test +Pending: worker: QuotaExceeded$
+^  crowd-3 +rev 1 +restarts 0 +[a-z0-9-]+ +Pending: worker: QuotaExceeded$
 ^\[web-1\] worker: started$
 ^kube: kube/nosuch.toml: NotFound$
 ^deployment/web deleted$
 ^deployment/crowd deleted$
+^space/small deleted$

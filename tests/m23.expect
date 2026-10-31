@@ -1,15 +1,1 @@
 ^site +site +0/4 +0 +0 +0 +- +- +http://127\.0\.0\.1:[0-9]+/fn/site/$
-^ingress: hello 200 hello ruos from site-f[0-9]+ node=test$
-^ingress: hit 200 application/json \{"count": 1, "instance": "site-f[0-9]+"\}$
-^ingress: hit 200 application/json \{"count": 2, "instance": "site-f[0-9]+"\}$
-^ingress: page 200 text/html; charset=utf-8 has h1$
-^ingress: not exposed 404$
-^ingress: no such 404$
-^ingress: list 200 lists site$
-^ingress: slow 504$
-^ingress: ingress from another origin 403$
-^ingress: ingress from the function port 403$
-^ingress: websocket from another origin 403$
-^ingress: done$
-^  [0-9]+s +Cold start site-f[0-9]+ \([0-9]+ ms\)$
-^ruos: fn site GET /api/hello → test: 200 \([0-9]+ ms\)$

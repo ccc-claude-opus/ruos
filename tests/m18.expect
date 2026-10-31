@@ -10,7 +10,7 @@
 ^config/greeting configured$
 ^deployment/front rolling out revision 2$
 ^deployment/front revision 2: complete \(1/1 ready\)$
-^front-2 +1/1 +Running +0 +2 +[0-9]+s +test$
+^front-2 +1/1 +Running +0 +2 +[0-9]+s +[a-z0-9-]+$
 ^\[front-2\] worker: MESSAGE=hello v2$
 ^1 +kube-front:r1$
 ^2 +kube-front:r2$

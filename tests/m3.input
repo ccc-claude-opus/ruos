@@ -106,6 +106,7 @@ kube apply kube/nosuch.toml
 kube delete web
 kube delete flaky
 kube delete crowd
+kube delete space small
 kube get deploy
 kube apply kube/echo.toml
 kube apply kube/greeting.toml kube/front.toml

@@ -575,6 +575,16 @@ impl Kube {
                 self.set_replicas(name, n);
                 Ok(format!("deployment/{name} scaled to {n}"))
             }
+            // The record goes; each node's dock keeps the quota until it reboots.
+            ["delete", "space", name] => {
+                let users = self.api.prefix("deploy/").map(|(k, _)| String::from(&k[7..])).collect::<Vec<_>>();
+                if users.iter().any(|d| self.current(d).is_some_and(|(_, _, t)| t.space.as_deref() == Some(*name))) {
+                    return Err(format!("space {name} is in use"));
+                }
+                self.api.get(&format!("space/{name}")).ok_or_else(|| format!("no space {name}"))?;
+                self.api.delete(&format!("space/{name}"));
+                Ok(format!("space/{name} deleted"))
+            }
             ["delete", "config", name] => {
                 let users = self.api.prefix("deploy/").map(|(k, _)| String::from(&k[7..])).collect::<Vec<_>>();
                 if users.iter().any(|d| self.current(d).is_some_and(|(_, _, t)| t.config.as_deref() == Some(*name))) {
@@ -609,7 +619,7 @@ impl Kube {
                 self.dock.request(&format!("logs {id}")).map_err(|e| format!("dock: {e:?}"))
             }
             _ => Err(String::from(
-                "commands: apply, get [pods|deploy|nodes|svc|fn|configs|spaces], describe NAME, rollout status|history|undo NAME, scale NAME N, delete [config] NAME, logs POD",
+                "commands: apply, get [pods|deploy|nodes|svc|fn|configs|spaces], describe NAME, rollout status|history|undo NAME, scale NAME N, delete [config|space] NAME, logs POD",
             )),
         }
     }

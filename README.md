@@ -224,7 +224,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `kube get` | `kube get [pods\|deploy\|nodes\|svc\|configs\|spaces]` | 列表（pod：READY、STATUS、RESTARTS、REV、AGE、NODE） |
 | `kube describe` | `kube describe NAME` | Deployment 的設定、每個 pod 的狀態與最近的事件 |
 | `kube scale` | `kube scale NAME N` | 改 replicas |
-| `kube delete` | `kube delete NAME` | 刪掉 Deployment 與它的 pod |
+| `kube delete` | `kube delete NAME` / `kube delete config NAME` / `kube delete space NAME` | 刪掉 Deployment（與它的 pod）或 Function；Config、Space 沒有人用時才能刪 |
 | `kube logs` | `kube logs POD` | pod 的輸出 |
 | `kube rollout` | `kube rollout status\|history\|undo NAME` | 滾動更新的進度、歷史、退回上一版 |
 | `kube call` | `kube call SERVICE TEXT` | 經 service 交給一個 ready 的 pod，印出它的回答 |

@@ -44,7 +44,7 @@ pod（映像 + quota + 名稱空間 + 可寫層）
   dock write POD FILE TEXT | commit POD IMAGE | build POD PODFILE | push IMAGE
 kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
   kube apply FILE...   kube get [pods|deploy|nodes|svc|configs|spaces]   kube describe NAME
-  kube scale NAME N    kube delete [config] NAME   kube logs POD
+  kube scale NAME N    kube delete [config|space] NAME   kube logs POD
   kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
 函式（serverless：請求來了才啟動，閒置就收掉；kube apply 一個 kind = \"Function\"）
   fn call NAME [TEXT...]   fn ls（= kube get fn）

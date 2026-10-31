@@ -38,7 +38,7 @@ node web/test/boot.mjs           # WASM 開機測試（需先 ./run.sh build was
 
 ## 測試
 
-`test.sh` 先建置全部平台，再為 QEMU 啟動一個共用的 ruos serve（`build/podsrv.log`），然後每個平台在新磁碟上開機兩次：第一次打 `tests/m3.input`，比對所有 `tests/mN.expect`、`tests/teach.expect` 與 `tests/shell.expect`（ERE，每行一個，三平台共用）加 `tests/mN.<平台>.expect`，並確認沒有 `panic:` 或 `FAILED`；第二次打 `tests/boot2.input`，比對 `tests/boot2.expect`（第一次 commit 的映像與物件要從磁碟回來）。每次開機後檢查 server（`post_checks`：可寫層、`podimg verify snap`），結果加進 log。
+`test.sh` 先建置全部平台；QEMU 的每個平台各自啟動一個新的 ruos serve（`start_podsrv`，`build/podsrv.log`，開始前清掉 `build/store/cluster`：每個平台是自己的叢集，不繼承前一個平台的記錄），wasm 開始前也清掉 cluster；另有一個測試網站給 curl（`web/test/testsite.mjs`，`--http-allow` 開放它，QEMU 的輸入把 `@HTTP_PORT@` 換成它的埠）；然後每個平台在新磁碟上開機兩次：第一次打 `tests/m3.input`，比對所有 `tests/mN.expect`、`tests/teach.expect` 與 `tests/shell.expect`（ERE，每行一個，三平台共用）加 `tests/mN.<平台>.expect`，並確認沒有 `panic:` 或 `FAILED`；第二次打 `tests/boot2.input`，比對 `tests/boot2.expect`（第一次 commit 的映像與物件要從磁碟回來）。每次開機後檢查 server（`post_checks`：可寫層、`podimg verify snap`），結果加進 log。
 WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、系統圖的 snapshot（shell 的 channel 連到 console、dock、kube、store（一般的與 http 兩條）與自己檔案系統的 overlay（資料與 control 兩條）），第一次開機時還故意在第 50 個回覆後斷一次 server 連線（`--drop-remote`，要看到 `remote: reconnected`）。shell 印出 `shell: ready` 後，QEMU 平台經 FIFO 從序列埠送入 `tests/m3.input`（太早送會被 OpenSBI 重設 UART 吃掉），WASM 由 `web/test/boot.mjs` 在同一時機送進核心 Worker。
 自測（`kernel/src/selftest.rs`）：第 10 個 tick 印 `timer: 10 ticks at 100 Hz`，第 30 個 tick 印 `M1 OK`；init 結束（印 `init exited (code)`）且 M1 自測做完才關機。M2–M4 的核心測試在 `apps/ktest`（init 開機時先跑，印 `M2 OK`、`M3 OK`、`M4 OK`；handle 0 = store），之後 init 啟動 console 與 shell，測試腳本打字驗證 shell。新里程碑照這個模式加 `tests/mN*.expect`。
 
@@ -72,7 +72,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
+- **2026-10-31 使用者決定：專注做 web 版的 OS**。平常只測 wasm（`./test.sh wasm`）；riscv64 / aarch64 不必每步都測，但要定期跑一次修好（2026-10-31 M23 後全部通過：`TIMEOUT=900 ./test.sh`，QEMU 的開機比較慢）。對外入口（ingress）只有 wasm 有。
 
 ## kube（M17）
 
@@ -109,6 +109,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - `libsys/src/func.rs`：`serve(|req| answer)`（說 ready、等 `conn`、讀一則訊息、回一則、說 done）、`call(name, req, timeout)`。`libsys/src/kv.rs`：`Kv`（`get/put/delete/list`；key ≤ 64 bytes、value ≤ 32 KiB 文字）。
   - KV：kubelet 把 `kv:K` 的請求變成 server 記錄 `data/K/HEX(key)`，每次直接讀寫 server（`Api::data` / `set_data`），不進每秒的快取：server 的 `KV_LIST ""` 不列 `data/`（要明說 prefix）。沒有 server 時放在 kube 的記憶體。
   - shell：`fn call NAME [TEXT]`（等 60 s）、`fn ls`、`kv ls|get|put|rm NS …`（每次經 kube 的 `connect kv:NS` 拿一條）。kube：`get fn`、`describe F`、`delete F`。`apps/greet`（記憶體裡的計數 + 有 `kv:counter` 就加 KV 計數；`sleep N` 請求）。範例 `fn-hello.toml`（idle 15、max 2、timeout 3）、`fn-count.toml`、`fn-cgi.toml`（reuse false）。測試 `tests/m22.expect`。網頁：節點卡片列出函式 instance、函式表；第 15 課。
+- **原生平台的細節（M23 後修好）**：store 經網路連 server 時帶 `?machine=ARCH`（所以 QEMU 的節點叫 `riscv64` / `aarch64`；aarch64 與 aarch64-el2 同名）；embedded-websocket 會送空的 `Origin:`，server 的 `own_origin` 把空的當成沒有。net 服務在連線不是自己要求而斷掉時印 `net: connection to … lost (state)`。只在 wasm 檢查的 ingress 項目在 `tests/m23.wasm.expect`。`kube delete space NAME`（沒有 Deployment 用時；各節點 dock 的 quota 留到重開機）。
 - **M23（對外入口）**：設計與實作時的改動見 `doc/ingress.md`。
   - ruos serve：`--fn-port N`（預設主埠 + 10；`--port 0` 時也是 0），印 `ruos: functions on http://ADDR:PORT/fn/`；`functions()` 另開一個 tiny_http（只有 `/fn/NAME/…` 與 `/` 列出公開的函式）。`ruos/src/ingress.rs`：機器（依 session）的佇列與 long poll（`next` 最多等 20 s；`put_back`）、`call`（讀 `fnstat/` 挑有熱 instance 的機器，否則輪流；等 timeout + 15 s，否則 504；沒有機器 503）、`answer`、`exposed`（讀 `fn/NAME` 的 `expose` / `timeout`）。`/v1/ingress/next`、`POST /v1/ingress/answer`。`own_origin` 擋 `/v1/remote` 與 `/v1/ingress` 的跨 origin（含 `Sec-Fetch-Site: same-site`）。函式的回應加 `X-Ruos-Node`；去掉 hop-by-hop header；body ≤ 60000。log：`ruos: fn NAME METHOD PATH → MACHINE: STATUS (N ms)`。
   - 核心：remote channel 有編號（`Channel.remote: Option<u8>`，`arch::remote_channel(i)` / `remote_send(i, …)`，wasm imports `remote_open(i)` / `remote_send(i, p, len)`、export `kernel_remote(i, len)`）；init 拿到 handle 3（server 連線）與 4（ingress），init 把第一個 channel 給 store 當 `remote`、第二個給 kube 當 `ingress`。`kernel_host.js` 的 `ingressLink`（long poll + POST，和 remote 同一個 session）。
