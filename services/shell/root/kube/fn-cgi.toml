@@ -1,0 +1,6 @@
+# reuse = false: every request gets a new instance (like CGI), so every
+# call is a cold start. Compare kube get fn with hello's.
+kind = "Function"
+name = "cgi"
+image = "greet"
+reuse = false

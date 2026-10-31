@@ -118,7 +118,9 @@ fn main(_arg: usize) -> i64 {
         return 1;
     }
     let Ok(ks) = store.connect() else { return 1 };
-    let ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("client", kube_srv.0);
+    // kube hands `http` on to the programs that use it.
+    let Ok(kh) = libsys::http::Http(web).connect() else { return 1 };
+    let ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("http", kh.0.0).add("client", kube_srv.0);
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };

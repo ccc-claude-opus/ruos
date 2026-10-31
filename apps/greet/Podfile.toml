@@ -1,0 +1,6 @@
+# greet: an example Function for kube (kind = "Function").
+name = "greet"
+entry = "/bin/greet"
+
+[programs]
+"/bin/greet" = "greet"

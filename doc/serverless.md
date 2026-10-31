@@ -1,6 +1,6 @@
 # Serverless（Function）設計
 
-狀態：設計已與使用者確認（2026-10-31），尚未實作。
+狀態：設計已與使用者確認（2026-10-31），已實作（M22）。程式在 `services/kube/src/funcs.rs`、`libsys/src/func.rs`、`libsys/src/kv.rs`，範例 `apps/greet` 與 `/home/kube/fn-*.toml`，測試 `tests/m22.expect`。
 
 ## 想法
 
@@ -53,6 +53,13 @@ mem = "8M"
 - `kube get fn`：每個函式在這個節點上的 instance 數、處理中的請求數、總請求數、冷啟動次數與平均時間、熱啟動的平均時間。
 - `kube describe NAME`：Function 的事件，例如「Cold start hello-f1 (34 ms)」「Scaled hello to 0 (idle 30s)」「Request timed out」。
 - 網頁的「叢集」頁：每個節點卡片上列出函式的 instance。
+
+## 實作時補上的細節
+
+- KV 的資料是 server 記錄 `data/K/HEX(key)`，每次直接讀寫 server，不放進每個節點每秒讀一次的完整列表（`KV_LIST ""` 不列 `data/`）。key 最多 64 bytes，value 最多 32 KiB 的文字。
+- kubelet 不 ping 函式 instance，只靠 `timeout`：一次只處理一個請求，處理中本來就不會回應。
+- 每個節點把自己的函式 instance 數寫進 `fnstat/NODE`，給網頁的「叢集」頁畫。
+- 還沒啟動好的 instance 15 秒內沒說 ready 就停掉；排隊超過 20 秒的請求會被關掉。
 
 ## 分步實作
 

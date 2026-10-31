@@ -143,4 +143,31 @@ curl http://127.0.0.1:@HTTP_PORT@/redirect
 curl http://localhost:1/
 curl file:///etc/motd
 run hello console http
+kube apply kube/fn-hello.toml
+kube get fn
+fn call hello world
+fn call hello again
+kube get fn
+kube describe hello | grep Cold
+sleep 18
+kube describe hello | grep Scaled
+kube get fn | grep hello
+fn call hello sleep 5
+kube describe hello | grep timed
+kube apply kube/fn-count.toml
+fn call count a
+fn call count b
+kv get counter count
+kv put counter note hi there
+kv ls counter
+kv get counter note
+kube apply kube/fn-cgi.toml
+fn call cgi 1
+fn call cgi 2
+kube get fn | grep cgi
+kube delete hello
+kube delete count
+kube delete cgi
+kv rm counter count
+kv get counter count || echo gone
 exit

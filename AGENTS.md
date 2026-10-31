@@ -70,6 +70,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**
   20. 網頁的「叢集」分頁與第 11–13 課 — **完成**
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
+  22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`；對外入口 `/fn/NAME` 是 server 類型，之後另外設計）
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -100,6 +101,13 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - `libsys/src/http.rs`：`Http::get()`（名稱 `http`）、`connect()`、`fetch(method, url, headers, body)`（FETCH 之後分段 READ）。`Store::raw(op, fields)` → (狀態, 內容)（原本的 `kv`；kube 也用）。
   - shell 的 `curl`（內建、可接管線）：`-i -I -s -f -L -X -H -d -o`；沒有 `://` 就補 `http://`；`-d` 預設 POST 與 form 的 Content-Type；二進位內容（前 1 KB 有 NUL）只報大小；`-f` 遇到 ≥ 400 狀態碼 22；連不到狀態 6。`run IMAGE http` 給新的 http client。
   - 測試：`web/test/boot.mjs` 自己起一個 Node http server（`/hello`、`/echo`、`/big`（20000 行，測分段）、`/redirect`（轉到 127.0.0.1:1，要被擋）、其他 404），以 `--http-allow 127.0.0.1:PORT` 開放它，輸入檔裡的 `@HTTP_PORT@` 換成它的埠；`tests/m21.expect`。QEMU 的 run_qemu 沒有換 `@HTTP_PORT@`（沒測原生平台）。第 14 課。
+- **M22（Function、KV）**：設計與決定見 `doc/serverless.md`。
+  - manifest `kind = "Function"`（`image`、`args`、`uses`、`timeout` 秒（10）、`max` 每節點 instance 數（4）、`idle` 秒（30）、`reuse`（true）、`[resources]`）→ 記錄 `fn/F`（`version N` + `---` + manifest）。和 Deployment 不能同名。
+  - `uses` 的項目（Deployment 與 Function 都可以）：`X` = service（`svc:X`）、`fn:X`、`kv:X`、`http`（kube 名稱空間的 `http` 的新 client；init 用 shell 那條 `web` 先 `connect` 一條給 kube）。kubelet 的 `bindings` 建 channel，自己留的那端記在 `links`（`Bind::Svc|Fn|Kv`）。
+  - `services/kube/src/funcs.rs`：每個節點自己管（leader 不參與）。請求（`fn:F` 上的 `connect` + channel 端，或 shell 經 kube client 的 `connect fn:F`）→ 交給閒著的 instance（`listen` 上的 `conn`），沒有就冷啟動（`dock run -d --quiet --name F-fN --label kube-fn=F --handle listen …`，最多 `max` 個），請求排隊等它說 `ready`；instance 一次一個請求，答完在 `listen` 上說 `done` → 閒著（`reuse = false` 就停掉）。tick：忙超過 `timeout` → 停掉（呼叫端看到 PEER_CLOSED，事件 `Request to … timed out`）；閒置 `idle` → 停掉（最後一個時事件 `Scaled F to 0`）；版本變了的閒置 instance 停掉；15 s 沒 ready 停掉；排隊 20 s 的請求關掉。統計（請求、冷啟動次數與時間、答完的平均時間、timeout）只在本節點；寫進 `fnstat/NODE` 給網頁。不 ping instance（只靠 timeout）。
+  - `libsys/src/func.rs`：`serve(|req| answer)`（說 ready、等 `conn`、讀一則訊息、回一則、說 done）、`call(name, req, timeout)`。`libsys/src/kv.rs`：`Kv`（`get/put/delete/list`；key ≤ 64 bytes、value ≤ 32 KiB 文字）。
+  - KV：kubelet 把 `kv:K` 的請求變成 server 記錄 `data/K/HEX(key)`，每次直接讀寫 server（`Api::data` / `set_data`），不進每秒的快取：server 的 `KV_LIST ""` 不列 `data/`（要明說 prefix）。沒有 server 時放在 kube 的記憶體。
+  - shell：`fn call NAME [TEXT]`（等 60 s）、`fn ls`、`kv ls|get|put|rm NS …`（每次經 kube 的 `connect kv:NS` 拿一條）。kube：`get fn`、`describe F`、`delete F`。`apps/greet`（記憶體裡的計數 + 有 `kv:counter` 就加 KV 計數；`sleep N` 請求）。範例 `fn-hello.toml`（idle 15、max 2、timeout 3）、`fn-count.toml`、`fn-cgi.toml`（reuse false）。測試 `tests/m22.expect`。網頁：節點卡片列出函式 instance、函式表；第 15 課。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）

@@ -1,0 +1,9 @@
+# A Function: no instance until a request comes (a cold start); then it
+# stays for the next ones, and goes after 15 s without work (scale to 0).
+# fn call hello world
+kind = "Function"
+name = "hello"
+image = "greet"
+idle = 15
+max = 2
+timeout = 3

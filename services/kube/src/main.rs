@@ -25,6 +25,7 @@ extern crate alloc;
 
 mod api;
 mod control;
+mod funcs;
 mod kubelet;
 mod manifest;
 
@@ -203,7 +204,23 @@ impl Kube {
                 }
                 Ok(out)
             }
+            Object::Function { name, .. } => {
+                if self.api.get(&format!("deploy/{name}")).is_some() {
+                    return Err(format!("{name} is a Deployment"));
+                }
+                let key = format!("fn/{name}");
+                let (verb, version) = match self.api.get(&key) {
+                    Some(r) if config_text(r) == text => return Ok(format!("function/{name} unchanged")),
+                    Some(r) => ("configured", r.num("version") + 1),
+                    None => ("created", 1),
+                };
+                self.api.put(&key, None, &format!("version {version}\n---\n{text}"));
+                Ok(format!("function/{name} {verb}"))
+            }
             Object::Deployment { name, replicas, template } => {
+                if self.api.get(&format!("fn/{name}")).is_some() {
+                    return Err(format!("{name} is a Function"));
+                }
                 if let Some(s) = &template.space
                     && self.api.get(&format!("space/{s}")).is_none()
                 {
@@ -299,7 +316,9 @@ impl Kube {
                 uses.push((String::from(&k[7..]), t));
             }
         }
-        let mut names: Vec<&str> = uses.iter().flat_map(|(_, t)| t.serves.iter().chain(&t.uses).map(String::as_str)).collect();
+        // Only services: not fn:, kv: or http.
+        let mut names: Vec<&str> =
+            uses.iter().flat_map(|(_, t)| t.serves.iter().chain(&t.uses).map(String::as_str)).filter(|u| !u.contains(':') && *u != "http").collect();
         names.sort();
         names.dedup();
         let mut out = format!("{:<10}{:<10}{:<8}{:<8}{}\n", "SERVICE", "READY", "USERS", "WAITING", "CONNECTIONS");
@@ -318,6 +337,69 @@ impl Kube {
             out += &format!("{:<10}{:<10}{:<8}{:<8}{}\n", s, format!("{ready}/{pods}"), users, self.kubelet.waiting(s), handed);
         }
         out
+    }
+
+    /// Functions, and what each did on this node.
+    fn get_fns(&self) -> String {
+        let mut out = format!("{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{}\n", "FUNCTION", "IMAGE", "HERE", "BUSY", "REQUESTS", "COLD", "START", "AVG");
+        let ms = |ns: u64, n: u64| if n == 0 { String::from("-") } else { format!("{}ms", ns / n / 1_000_000) };
+        for (k, _) in self.api.prefix("fn/") {
+            let f = &k[3..];
+            let Some((_, spec)) = funcs::spec(&self.api, f) else { continue };
+            let here = self.kubelet.insts.iter().filter(|x| x.func == f).count();
+            let busy = self.kubelet.insts.iter().filter(|x| x.func == f && matches!(x.state, funcs::State::Busy { .. })).count();
+            let (req, cold, cold_ns, n, busy_ns) =
+                self.kubelet.fn_stat(f).map_or((0, 0, 0, 0, 0), |s| (s.requests, s.cold, s.cold_ns, s.answered, s.busy_ns));
+            out += &format!(
+                "{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{}\n",
+                f,
+                spec.image,
+                format!("{here}/{}", spec.max),
+                busy,
+                req,
+                cold,
+                ms(cold_ns, cold),
+                ms(busy_ns, n)
+            );
+        }
+        out
+    }
+
+    fn describe_fn(&self, name: &str) -> Result<String, String> {
+        let (version, s) = funcs::spec(&self.api, name).ok_or_else(|| format!("no function {name}"))?;
+        let none = |v: &[String], sep: &str| if v.is_empty() { String::from("-") } else { v.join(sep) };
+        let mut out = format!("Name:       {name} (Function, version {version})\n");
+        out += &format!("Image:      {}\n", s.image);
+        out += &format!("Args:       {}\n", none(&s.args, " "));
+        out += &format!("Uses:       {}\n", none(&s.uses, ", "));
+        out += &format!("Limits:     timeout {}s, max {} per node, idle {}s, reuse {}\n", s.timeout, s.max, s.idle, s.reuse);
+        out += &format!("Resources:  mem {}, tasks {} (per instance)\n", s.mem, s.tasks);
+        if let Some(st) = self.kubelet.fn_stat(name) {
+            out += &format!(
+                "Here:       {} requests, {} cold starts, {} timeouts, {} waiting\n",
+                st.requests,
+                st.cold,
+                st.timeouts,
+                self.kubelet.fn_waiting(name)
+            );
+        }
+        out += "Instances (this node):\n";
+        for x in self.kubelet.insts.iter().filter(|x| x.func == name) {
+            let st = match x.state {
+                funcs::State::Starting => "starting",
+                funcs::State::Idle => "idle",
+                funcs::State::Busy { .. } => "busy",
+            };
+            out += &format!("  {:<14}{st}\n", x.name);
+        }
+        out += "Events:\n";
+        if let Some(e) = self.api.get(&format!("events/{name}")) {
+            for l in e.value.lines() {
+                let (t, m) = l.split_once(' ').unwrap_or((l, ""));
+                out += &format!("  {:<6}{m}\n", age(&self.api, t.parse().unwrap_or(0)));
+            }
+        }
+        Ok(out)
     }
 
     fn get_configs(&self) -> String {
@@ -437,10 +519,16 @@ impl Kube {
         let (line, body) = msg.split_once('\n').unwrap_or((msg, ""));
         let words: Vec<&str> = line.split_whitespace().collect();
         if let Some(h) = conn {
-            // `connect SERVICE` with a channel end: the caller (the shell) calls a service.
+            // `connect SERVICE` / `connect fn:F` with a channel end: the caller
+            // (the shell) calls a service or a Function; `connect kv:K`: the
+            // channel end is for requests to KV namespace K.
             return match words.as_slice() {
                 ["connect", s] => {
-                    self.kubelet.connect(s, h);
+                    match s.split_once(':') {
+                        Some(("fn", f)) => self.kubelet.fn_request(&mut self.api, f, h),
+                        Some(("kv", k)) => self.kubelet.add_kv(k, h),
+                        _ => self.kubelet.connect(s, h),
+                    }
                     Ok(String::from("ok"))
                 }
                 _ => {
@@ -458,8 +546,10 @@ impl Kube {
             ["get", "nodes" | "node"] => Ok(self.get_nodes()),
             ["get", "services" | "service" | "svc"] => Ok(self.get_services()),
             ["get", "configs" | "config"] => Ok(self.get_configs()),
+            ["get", "functions" | "function" | "fn"] => Ok(self.get_fns()),
             ["get", "spaces" | "space"] => self.dock.request("spaces").map_err(|e| format!("dock: {e:?}")),
-            ["get", what] => Err(format!("unknown resource {what} (pods, deploy, nodes, svc, configs, spaces)")),
+            ["get", what] => Err(format!("unknown resource {what} (pods, deploy, nodes, svc, fn, configs, spaces)")),
+            ["describe", name] if self.api.get(&format!("fn/{name}")).is_some() => self.describe_fn(name),
             ["describe", name] | ["describe", "deploy" | "deployment", name] => self.describe(name),
             ["rollout", what, name] => self.rollout(what, name),
             ["scale", name, n] => {
@@ -476,6 +566,11 @@ impl Kube {
                 self.api.get(&format!("config/{name}")).ok_or_else(|| format!("no config {name}"))?;
                 self.api.delete(&format!("config/{name}"));
                 Ok(format!("config/{name} deleted"))
+            }
+            ["delete", name] if self.api.get(&format!("fn/{name}")).is_some() => {
+                self.api.delete(&format!("fn/{name}"));
+                self.api.delete(&format!("events/{name}"));
+                Ok(format!("function/{name} deleted"))
             }
             ["delete", name] | ["delete", "deploy" | "deployment", name] => {
                 deploy(self, name)?;
@@ -497,7 +592,7 @@ impl Kube {
                 self.dock.request(&format!("logs {id}")).map_err(|e| format!("dock: {e:?}"))
             }
             _ => Err(String::from(
-                "commands: apply, get [pods|deploy|nodes|svc|configs|spaces], describe NAME, rollout status|history|undo NAME, scale NAME N, delete [config] NAME, logs POD",
+                "commands: apply, get [pods|deploy|nodes|svc|fn|configs|spaces], describe NAME, rollout status|history|undo NAME, scale NAME N, delete [config] NAME, logs POD",
             )),
         }
     }
@@ -570,7 +665,7 @@ fn main(_arg: usize) -> i64 {
         dock,
         store,
         api,
-        kubelet: Kubelet::new(port, dock),
+        kubelet: Kubelet::new(port, dock, libsys::http::Http::get()),
         control: Controller::new(),
         clients: Vec::new(),
         leader: false,
@@ -593,7 +688,7 @@ fn main(_arg: usize) -> i64 {
                 }
                 let _ = k.port.bind(events.0, signal::READABLE, EVENTS);
             }
-            Ok(p) if p.key >= LINK => k.kubelet.link_message((p.key - LINK) as usize),
+            Ok(p) if p.key >= LINK => k.kubelet.link_message(&mut k.api, (p.key - LINK) as usize),
             Ok(p) if p.key >= LISTEN => k.kubelet.listen_message(&mut k.api, (p.key - LISTEN) as usize),
             Ok(p) => k.client_message(p.key as usize),
             Err(Error::TimedOut) => {}

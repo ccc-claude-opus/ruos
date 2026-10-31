@@ -205,6 +205,28 @@ export const LESSONS = [
       { cmd: 'run hello console http', note: '把 http 交給一個程式；不給就沒有' },
     ],
   },
+  {
+    title: '15. 函式：請求來了才啟動（serverless）',
+    text: [
+      'AWS Lambda、Cloudflare Workers 這類 serverless：只交出一個函式，平台在請求來時才把它跑起來（冷啟動），忙了多開幾份，閒了收掉，最後一份都不留（scale to zero）。這就是「replicas 由請求決定、可以是 0」的 Deployment。',
+      '在 ruos 裡，函式在收到請求的那台機器上跑，就像 Workers 在收到請求的據點執行。每個 instance 是一個新的 WebAssembly instance，所以冷啟動只要幾十 ms。函式是 stateless 的：instance 記憶體裡的東西不可靠，要保存就用 KV（`uses = ["kv:counter"]`），沒宣告的函式拿不到。到「叢集」頁看 instance 怎麼出現又消失。',
+    ],
+    steps: [
+      { cmd: 'cat kube/fn-hello.toml', note: '一個 Function：image、max、idle、timeout' },
+      { cmd: 'kube apply kube/fn-hello.toml', note: '套用：這時一個 instance 都沒有' },
+      { cmd: 'fn call hello world', note: '第一個請求：冷啟動' },
+      { cmd: 'fn call hello again', note: '第二個：同一個 instance（#2 here），熱啟動' },
+      { cmd: 'kube get fn', note: 'instance 數、請求數、冷啟動次數與時間' },
+      { cmd: 'kube describe hello', note: '事件：Cold start…；等 15 秒會看到 Scaled hello to 0' },
+      { cmd: 'fn call hello sleep 5', note: '超過 timeout（3 秒）：instance 被停掉' },
+      { cmd: 'kube apply kube/fn-count.toml', note: '同一個程式，加上 kv:counter' },
+      { cmd: 'fn call count a', note: '#N here 會歸零，kv:counter 的數字不會' },
+      { cmd: 'kv get counter count', note: 'shell 也能看 KV' },
+      { cmd: 'kube apply kube/fn-cgi.toml', note: 'reuse = false：每個請求一個新的 instance' },
+      { cmd: 'fn call cgi 1; fn call cgi 2; kube get fn', note: '每次都是冷啟動' },
+      { cmd: 'kube delete hello; kube delete count; kube delete cgi', note: '收拾' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

@@ -67,7 +67,8 @@ pub const MAX_INLINE: usize = 60000;
 /// The cluster's records on the server (kube), forwarded as they are:
 /// [KV_HELLO] → [OK, `MACHINE SESSION NOW_MS`];
 pub const KV_HELLO: u8 = 40;
-/// [KV_LIST, prefix] → [OK, `NOW_MS\n` + per record `KEY VERSION UPDATED_MS LEN\n` + value + `\n`];
+/// [KV_LIST, prefix] → [OK, `NOW_MS\n` + per record `KEY VERSION UPDATED_MS LEN\n` + value + `\n`]
+/// (an empty prefix leaves out `data/…`, the KV namespaces);
 pub const KV_LIST: u8 = 41;
 /// [KV_PUT, key, expect, value] → [OK, `VERSION`] or [FAILED, `conflict`]
 /// (expect: empty = any, 0 = must not exist, else the current version);

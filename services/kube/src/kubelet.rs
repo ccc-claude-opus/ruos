@@ -3,12 +3,18 @@
 //! this one), restarts them by their policy, gives them their service
 //! channels, pings the serving ones, and writes how each is doing
 //! (`status/P`). Connections to a service go to a ready pod of it on this
-//! node: a channel cannot cross machines.
+//! node: a channel cannot cross machines. It also runs this node's
+//! Function instances (funcs.rs) and answers KV namespaces' requests.
+//!
+//! What a program `uses` becomes a name in its namespace: a service X
+//! `svc:X`, a Function `fn:X`, a KV namespace `kv:X` (the kubelet keeps the
+//! other end of each), and `http` (a new client of kube's own).
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use libsys::dock::Dock;
+use libsys::http::Http;
 use libsys::{Channel, Error, Handle, Port, clock_ns, signal, svc};
 
 use crate::api::Api;
@@ -107,13 +113,27 @@ struct Waiting {
     until: u64,
 }
 
+/// What a channel in `links` leads to.
+#[derive(Clone, PartialEq)]
+pub enum Bind {
+    Svc(String),
+    Fn(String),
+    Kv(String),
+}
+
 pub struct Kubelet {
     pub port: Port,
     pub dock: Dock,
     pub pods: Vec<Pod>,
-    /// kubelet's ends of pods' `listen` and `svc:NAME` channels.
-    listens: Vec<Option<Channel>>,
-    links: Vec<Option<(Channel, String)>>,
+    /// kubelet's ends of programs' `listen` and `svc:` / `fn:` / `kv:` channels.
+    pub(crate) listens: Vec<Option<Channel>>,
+    pub(crate) links: Vec<Option<(Channel, Bind)>>,
+    /// kube's `http` (programs that use it get a new client).
+    pub(crate) http: Option<Http>,
+    /// This node's Function instances, and what each Function did here.
+    pub(crate) insts: Vec<crate::funcs::Inst>,
+    pub(crate) fns: Vec<crate::funcs::FnStat>,
+    pub(crate) fn_next: u32,
     waiting: Vec<Waiting>,
     /// Round robin over each service's pods.
     turn: usize,
@@ -123,7 +143,7 @@ pub struct Kubelet {
     spaces: Vec<String>,
 }
 
-fn slot<T>(v: &mut Vec<Option<T>>, x: T) -> usize {
+pub(crate) fn slot<T>(v: &mut Vec<Option<T>>, x: T) -> usize {
     match v.iter().position(Option::is_none) {
         Some(i) => {
             v[i] = Some(x);
@@ -136,7 +156,7 @@ fn slot<T>(v: &mut Vec<Option<T>>, x: T) -> usize {
     }
 }
 
-fn secs(ns: u64) -> u64 {
+pub(crate) fn secs(ns: u64) -> u64 {
     ns.div_ceil(SEC)
 }
 
@@ -152,13 +172,17 @@ pub fn revision(api: &Api, d: &str, rev: u32) -> Option<(String, Template)> {
 }
 
 impl Kubelet {
-    pub fn new(port: Port, dock: Dock) -> Kubelet {
+    pub fn new(port: Port, dock: Dock, http: Option<Http>) -> Kubelet {
         Kubelet {
             port,
             dock,
             pods: Vec::new(),
             listens: Vec::new(),
             links: Vec::new(),
+            http,
+            insts: Vec::new(),
+            fns: Vec::new(),
+            fn_next: 0,
             waiting: Vec::new(),
             turn: 0,
             handed: Vec::new(),
@@ -170,8 +194,42 @@ impl Kubelet {
         self.waiting.iter().filter(|w| w.service == service).count()
     }
 
+    /// Channels for what a program `uses`: (dock's `--handle` options, the
+    /// handles to send with them, the kubelet's ends in `links`).
+    pub(crate) fn bindings(&mut self, uses: &[String]) -> (String, Vec<Handle>, Vec<usize>) {
+        let (mut cmd, mut handles, mut links) = (String::new(), Vec::new(), Vec::new());
+        for u in uses {
+            if u == "http" {
+                if let Some(h) = self.http.and_then(|h| h.connect().ok()) {
+                    cmd += " --handle http";
+                    handles.push(h.0.0);
+                }
+                continue;
+            }
+            let (bind, name) = match u.split_once(':') {
+                Some(("fn", f)) => (Bind::Fn(String::from(f)), u.clone()),
+                Some(("kv", k)) => (Bind::Kv(String::from(k)), u.clone()),
+                _ => (Bind::Svc(u.clone()), format!("svc:{u}")),
+            };
+            if let Ok((mine, theirs)) = Channel::create() {
+                let i = slot(&mut self.links, (mine, bind));
+                let _ = self.port.bind(mine.0, signal::READABLE | signal::PEER_CLOSED, LINK + i as u64);
+                links.push(i);
+                handles.push(theirs.0);
+                cmd += &format!(" --handle {name}");
+            }
+        }
+        (cmd, handles, links)
+    }
+
+    /// A channel end from a client of kube (the shell) for a KV namespace.
+    pub fn add_kv(&mut self, name: &str, c: Handle) {
+        let i = slot(&mut self.links, (Channel(c), Bind::Kv(String::from(name))));
+        let _ = self.port.bind(c, signal::READABLE | signal::PEER_CLOSED, LINK + i as u64);
+    }
+
     /// Closes the kubelet's ends of a pod's channels.
-    fn drop_io(&mut self, listen: Option<usize>, links: Vec<usize>) {
+    pub(crate) fn drop_io(&mut self, listen: Option<usize>, links: Vec<usize>) {
         if let Some(c) = listen.and_then(|i| self.listens[i].take()) {
             let _ = c.close();
         }
@@ -228,7 +286,6 @@ impl Kubelet {
         // The pod's channels: the kubelet keeps one end of each.
         let mut handles = Vec::new();
         let mut listen = None;
-        let mut links = Vec::new();
         if t.serves.is_some()
             && let Ok((mine, theirs)) = Channel::create()
         {
@@ -238,15 +295,9 @@ impl Kubelet {
             handles.push(theirs.0);
             cmd += " --handle listen";
         }
-        for s in &t.uses {
-            if let Ok((mine, theirs)) = Channel::create() {
-                let i = slot(&mut self.links, (mine, s.clone()));
-                let _ = self.port.bind(mine.0, signal::READABLE | signal::PEER_CLOSED, LINK + i as u64);
-                links.push(i);
-                handles.push(theirs.0);
-                cmd += &format!(" --handle svc:{s}");
-            }
-        }
+        let (more, hs, links) = self.bindings(&t.uses);
+        cmd += &more;
+        handles.extend(hs);
         cmd += &format!(" {image}");
         for a in &t.args {
             cmd += &format!(" {a}");
@@ -289,6 +340,9 @@ impl Kubelet {
 
     /// Dock says the pod ended: `code`, or None when it was stopped or removed.
     pub fn ended(&mut self, api: &mut Api, dock_id: u64, code: Option<i64>) {
+        if self.inst_ended(api, dock_id) {
+            return;
+        }
         let now = clock_ns();
         let Some(p) = self.pods.iter_mut().find(|p| p.dock_id == Some(dock_id) && p.phase == Phase::Running) else { return };
         let how = match code {
@@ -392,12 +446,13 @@ impl Kubelet {
                 _ => {}
             }
         }
-        t
+        t.min(self.fn_wake())
     }
 
     /// Every 2 s: dock's view of every pod (in case an event was missed),
     /// pings to the serving pods, a restart for those that stopped answering.
     pub fn tick(&mut self, api: &mut Api) {
+        self.fn_tick(api);
         let now = clock_ns();
         if let Ok(list) = self.dock.request("pods") {
             let mut seen: Vec<(u64, Option<Option<i64>>)> = Vec::new();
@@ -412,7 +467,8 @@ impl Kubelet {
                 };
                 seen.push((id, state));
             }
-            let running: Vec<u64> = self.pods.iter().filter(|p| p.phase == Phase::Running).filter_map(|p| p.dock_id).collect();
+            let mut running: Vec<u64> = self.pods.iter().filter(|p| p.phase == Phase::Running).filter_map(|p| p.dock_id).collect();
+            running.extend(self.insts.iter().filter_map(|i| i.dock_id));
             for id in running {
                 match seen.iter().find(|(i, _)| *i == id) {
                     Some((_, None)) => {}
@@ -489,7 +545,12 @@ impl Kubelet {
         loop {
             match c.read(&mut buf, &mut []) {
                 Ok((n, _)) => {
-                    let Some(p) = self.pods.iter_mut().find(|p| p.listen == Some(i)) else { break };
+                    let Some(p) = self.pods.iter_mut().find(|p| p.listen == Some(i)) else {
+                        // A Function instance: ready, or done with a request.
+                        let msg = Vec::from(&buf[..n]);
+                        self.inst_said(api, i, &msg);
+                        continue;
+                    };
                     p.answered = clock_ns();
                     if &buf[..n] == svc::READY && !p.said_ready {
                         p.said_ready = true;
@@ -508,14 +569,24 @@ impl Kubelet {
         self.write_status(api);
     }
 
-    /// A pod sent a connection through its `svc:NAME`.
-    pub fn link_message(&mut self, i: usize) {
-        let Some((c, service)) = self.links[i].clone() else { return };
-        let mut buf = [0u8; 16];
+    /// A program sent a connection through its `svc:NAME` or `fn:NAME`, or
+    /// a request on its `kv:NAME`.
+    pub fn link_message(&mut self, api: &mut Api, i: usize) {
+        let Some((c, bind)) = self.links[i].clone() else { return };
+        let mut buf = alloc::vec![0u8; libsys::kv::MAX_VALUE + 256];
         let mut hs = [Handle(0); 1];
         loop {
             match c.read(&mut buf, &mut hs) {
-                Ok((n, 1)) if &buf[..n] == svc::CONNECT => self.connect(&service, hs[0]),
+                Ok((n, 0)) if matches!(bind, Bind::Kv(_)) => {
+                    let Bind::Kv(k) = &bind else { unreachable!() };
+                    let r = crate::funcs::kv_request(api, k, &buf[..n]);
+                    let _ = c.write(&r, &[]);
+                }
+                Ok((n, 1)) if &buf[..n] == svc::CONNECT => match &bind {
+                    Bind::Svc(s) => self.connect(s, hs[0]),
+                    Bind::Fn(f) => self.fn_request(api, f, hs[0]),
+                    Bind::Kv(_) => _ = hs[0].close(),
+                },
                 Ok((_, nh)) => {
                     for h in &hs[..nh] {
                         let _ = h.close();
@@ -525,7 +596,13 @@ impl Kubelet {
                     let _ = self.port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, LINK + i as u64);
                     return;
                 }
-                Err(_) => return,
+                // The other end is gone (a pod ended, the shell is done with a kv:).
+                Err(_) => {
+                    if let Some((c, _)) = self.links[i].take() {
+                        let _ = c.close();
+                    }
+                    return;
+                }
             }
         }
     }

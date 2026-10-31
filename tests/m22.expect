@@ -1,0 +1,25 @@
+^function/hello created$
+^FUNCTION +IMAGE +HERE +BUSY +REQUESTS +COLD +START +AVG$
+^hello +greet +0/2 +0 +0 +0 +- +-$
+^hello-f[0-9]+: hello world \(#1 here\)$
+^hello-f[0-9]+: hello again \(#2 here\)$
+^hello +greet +1/2 +0 +2 +1 +[0-9]+ms +[0-9]+ms$
+^  [0-9]+s +Cold start hello-f[0-9]+ \([0-9]+ ms\)$
+^  [0-9]+s +Scaled hello to 0 \(idle 15s\)$
+^hello +greet +0/2 +0 +2 +1 +[0-9]+ms +[0-9]+ms$
+^fn: call: no answer from hello
+^  [0-9]+s +Request to hello-f[0-9]+ timed out \(3s\)$
+^function/count created$
+^count-f[0-9]+: hello a \(#1 here, #1 in kv:counter\)$
+^count-f[0-9]+: hello b \(#2 here, #2 in kv:counter\)$
+^2$
+^count$
+^note$
+^hi there$
+^cgi-f[0-9]+: hello 1 \(#1 here\)$
+^cgi-f[0-9]+: hello 2 \(#1 here\)$
+^cgi +greet +0/4 +0 +2 +2 +[0-9]+ms +[0-9]+ms$
+^function/hello deleted$
+^function/cgi deleted$
+^kv: no such key$
+^gone$

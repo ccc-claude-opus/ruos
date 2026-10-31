@@ -78,7 +78,7 @@ export class ClusterView {
       const [head, manifest = ''] = (get(`rev/${name}/${d.rev}`)?.value || '').split('---\n');
       d.image = fields(head).image;
       const m = (k) => manifest.match(new RegExp(`^${k} = "([^"]*)"`, 'm'))?.[1];
-      const list = (k) => (manifest.match(new RegExp(`^${k} = \\[([^\\]]*)\\]`, 'm'))?.[1] || '').match(/[a-z0-9-]+/g) || [];
+      const list = (k) => (manifest.match(new RegExp(`^${k} = \\[([^\\]]*)\\]`, 'm'))?.[1] || '').match(/[a-z0-9:-]+/g) || [];
       d.serves = m('serves');
       d.uses = list('uses');
       d.rolling = fields(get(`ctl/${name}`)?.value).rolling === '1';
@@ -87,6 +87,15 @@ export class ClusterView {
       return d;
     });
 
+    // Functions: instances are each node's own (fnstat/NODE: `NAME N BUSY REQUESTS COLD` lines).
+    const fns = prefix('fn/').map(([name, r]) => {
+      const m = (k) => r.value.match(new RegExp(`^${k} = "?([^"\\n]*)"?`, 'm'))?.[1];
+      return { name, image: m('image'), max: m('max') || '4', idle: m('idle') || '30' };
+    });
+    const fnstat = Object.fromEntries(prefix('fnstat/').map(([node, r]) => [node, r.value.split('\n').filter(Boolean).map((l) => {
+      const [name, n, busy, requests, cold] = l.split(' ');
+      return { name, n: Number(n), busy: Number(busy), requests: Number(requests), cold: Number(cold) };
+    })]));
     const out = [];
     const up = nodes.filter((n) => n.up).length;
     out.push(el('p', { class: 'summary' },
@@ -110,7 +119,11 @@ export class ClusterView {
         ul.append(el('li', {}, el('span', { class: `dot ${cls}`, 'aria-hidden': 'true' }), el('span', { class: 'mono' }, p.name),
           el('span', { class: 'qnum' }, ` ${label} · rev ${p.rev}${restarts}`)));
       }
-      if (!mine.length) ul.append(el('li', { class: 'qnum' }, '（沒有 pod）'));
+      for (const f of (fnstat[n.name] || []).filter((f) => f.n > 0)) {
+        ul.append(el('li', {}, el('span', { class: `dot ${f.busy ? 'warn' : 'good'}`, 'aria-hidden': 'true' }), el('span', { class: 'mono' }, `ƒ ${f.name}`),
+          el('span', { class: 'qnum' }, ` 函式 instance ×${f.n}${f.busy ? `（忙 ${f.busy}）` : ''}`)));
+      }
+      if (!ul.children.length) ul.append(el('li', { class: 'qnum' }, '（沒有 pod）'));
       card.append(ul);
       grid.append(card);
     }
@@ -141,6 +154,21 @@ export class ClusterView {
       out.push(t);
     } else {
       out.push(el('p', { class: 'hint' }, '還沒有 Deployment。試試第 11 課：kube apply kube/web.toml'));
+    }
+
+    if (fns.length) {
+      out.push(el('h3', {}, '函式（Function）'));
+      const t = el('table');
+      t.append(el('tr', {}, el('th', {}, '名稱'), el('th', {}, '映像'), el('th', {}, 'instance（各節點）'), el('th', {}, '請求'), el('th', {}, '冷啟動')));
+      for (const f of fns) {
+        const per = Object.entries(fnstat).map(([node, l]) => [node, l.find((x) => x.name === f.name)]).filter(([, x]) => x);
+        const where = per.map(([node, x]) => `${node}: ${x.n}`).join('，') || '0（縮到 0）';
+        const sum = (k) => per.reduce((a, [, x]) => a + x[k], 0);
+        t.append(el('tr', {}, el('td', { class: 'mono' }, f.name), el('td', { class: 'mono' }, f.image || '?'), el('td', {}, where),
+          el('td', {}, String(sum('requests'))), el('td', {}, String(sum('cold')))));
+      }
+      out.push(t);
+      out.push(el('p', { class: 'hint' }, '函式沒有固定的 pod：請求來了才在那台機器上冷啟動，閒置一段時間就收掉。'));
     }
 
     const events = [];

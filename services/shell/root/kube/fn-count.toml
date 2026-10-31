@@ -1,0 +1,6 @@
+# The same program with a KV namespace: kv:counter keeps a count that
+# outlives any instance. kv get counter count
+kind = "Function"
+name = "count"
+image = "greet"
+uses = ["kv:counter"]

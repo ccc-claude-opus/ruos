@@ -135,7 +135,10 @@ impl Controller {
         let stale: Vec<String> = api
             .prefix("ctl/")
             .chain(api.prefix("events/"))
-            .filter(|(k, _)| !deploys.iter().any(|(d, _, _)| k.split_once('/').map(|(_, x)| x) == Some(d.as_str())))
+            .filter(|(k, _)| {
+                let name = k.split_once('/').map(|(_, x)| x).unwrap_or("");
+                !deploys.iter().any(|(d, _, _)| d == name) && !(k.starts_with("events/") && api.get(&format!("fn/{name}")).is_some())
+            })
             .map(|(k, _)| String::from(k))
             .collect();
         for k in stale {

@@ -365,7 +365,9 @@ impl Session {
                 let p = decode(msg, 1).map(|(_, f)| text(f[0]).to_string()).unwrap_or_default();
                 Ok(cluster::with(&self.store, |kv| {
                     let mut out = format!("{}\n", cluster::now_ms()).into_bytes();
-                    for (k, r) in kv.list(&p) {
+                    // KV namespaces' data (`data/…`) only when asked for: every
+                    // node reads the full listing once a second.
+                    for (k, r) in kv.list(&p).filter(|(k, _)| !p.is_empty() || !k.starts_with("data/")) {
                         out.extend_from_slice(format!("{k} {} {} {}\n", r.version, r.updated, r.value.len()).as_bytes());
                         out.extend_from_slice(&r.value);
                         out.push(b'\n');

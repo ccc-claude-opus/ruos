@@ -46,6 +46,9 @@ kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
   kube apply FILE...   kube get [pods|deploy|nodes|svc|configs|spaces]   kube describe NAME
   kube scale NAME N    kube delete [config] NAME   kube logs POD
   kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
+函式（serverless：請求來了才啟動，閒置就收掉；kube apply 一個 kind = \"Function\"）
+  fn call NAME [TEXT...]   fn ls（= kube get fn）
+  kv ls NS [PREFIX]   kv get NS KEY   kv put NS KEY VALUE...   kv rm NS KEY（KV namespace）
 網路（由 server 代為連線；要有 http 這個 capability）
   curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL
 ";
@@ -553,6 +556,8 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
         }
         "kube" => sh.kube(&argv[1..]),
         "curl" => curl(sh, &argv[1..]),
+        "fn" => sh.func(&argv[1..]),
+        "kv" => sh.kv(&argv[1..]),
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -720,6 +725,69 @@ impl Sh {
 }
 
 impl Sh {
+    /// A channel end handed to kube with `connect WHAT` (a Function's request, a KV namespace).
+    fn kube_connect(&self, what: &str) -> Result<Channel, String> {
+        let k = self.kube.ok_or("kube is not available")?;
+        let (mine, theirs) = Channel::create().map_err(err("channel"))?;
+        let r = k.request_with(&format!("connect {what}"), &[theirs.0]).map_err(err("request"))?;
+        match r.strip_prefix("error ") {
+            Some(m) => Err(String::from(m.trim_end())),
+            None => Ok(mine),
+        }
+    }
+
+    /// fn call NAME TEXT: a request to a Function; fn ls.
+    fn func(&mut self, argv: &[String]) -> Out {
+        match argv {
+            [c, name, words @ ..] if c == "call" => {
+                let mine = self.kube_connect(&format!("fn:{name}"))?;
+                let msg: Vec<&str> = words.iter().map(String::as_str).collect();
+                mine.write(msg.join(" ").as_bytes(), &[]).map_err(err("call"))?;
+                let got = libsys::wait_one(mine.0, libsys::signal::READABLE | libsys::signal::PEER_CLOSED, 60_000_000_000);
+                let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
+                let r = got.and_then(|_| mine.read(&mut buf, &mut []));
+                let _ = mine.close();
+                match r {
+                    Ok((n, _)) => Ok(format!("{}\n", text(&buf[..n]).trim_end()).into_bytes()),
+                    Err(_) => {
+                        self.status = 1;
+                        Err(format!("call: no answer from {name} (no such function, timed out, or it failed)"))
+                    }
+                }
+            }
+            [l] if l == "ls" => self.kube(&[String::from("get"), String::from("fn")]),
+            _ => Err(String::from("fn call NAME [TEXT...] | fn ls")),
+        }
+    }
+
+    /// kv ls|get|put|rm NS …: a KV namespace (the shell asks kube for it).
+    fn kv(&mut self, argv: &[String]) -> Out {
+        let usage = "kv ls NS [PREFIX] | kv get NS KEY | kv put NS KEY VALUE... | kv rm NS KEY";
+        let [op, ns, rest @ ..] = argv else { return Err(String::from(usage)) };
+        let kv = libsys::kv::Kv(self.kube_connect(&format!("kv:{ns}"))?);
+        let r = match (op.as_str(), rest) {
+            ("ls", p) => kv.list(p.first().map_or("", String::as_str)).map(|ks| lines_out(ks)),
+            ("get", [k]) => kv.get(k).map(|v| format!("{v}\n").into_bytes()),
+            ("put", [k, v @ ..]) if !v.is_empty() => {
+                let v: Vec<&str> = v.iter().map(String::as_str).collect();
+                kv.put(k, &v.join(" ")).map(|_| Vec::new())
+            }
+            ("rm", [k]) => kv.delete(k).map(|_| Vec::new()),
+            _ => {
+                let _ = kv.0.close();
+                return Err(String::from(usage));
+            }
+        };
+        let _ = kv.0.close();
+        r.map_err(|e| match e {
+            libsys::Error::NotFound => {
+                self.status = 1;
+                String::from("no such key")
+            }
+            e => format!("{e:?}"),
+        })
+    }
+
     /// kube: `apply` sends the files' text; the rest goes as it is.
     fn kube(&self, argv: &[String]) -> Out {
         let k = self.kube.ok_or("not available")?;
@@ -907,7 +975,7 @@ const BUILTINS: &[&str] = &[
     "help", "echo", "pwd", "cd", "ls", "cat", "tree", "stat", "mkdir", "rmdir", "rm", "cp", "mv", "touch", "save", "head", "tail", "wc",
     "grep", "sort", "uniq", "cut", "tr", "sed", "seq", "tee", "basename", "dirname", "printf", "env", "set", "export", "unset", "read",
     "find", "rev", "tac", "nl", "which", "type", "sh", ".", "source", "test", "[", "true", "false", "date", "uptime", "clear", "history",
-    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl",
+    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl", "fn", "kv",
 ];
 
 /// test / [ : -e -f -d -s -z -n, = !=, -eq -ne -lt -le -gt -ge, !.

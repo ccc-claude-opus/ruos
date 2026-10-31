@@ -13,7 +13,11 @@
 //! - `pod/P`        the controller's: `deploy`, `rev`, `node` (or `-`), `created`
 //! - `status/P`     the node's: `node`, `phase`, `ready`, `restarts`, `started`, `reason`, `dock`
 //! - `config/C`, `space/S`   manifests as applied
-//! - `events/D`     `TIME message` lines
+//! - `events/D`     `TIME message` lines (a Deployment's or a Function's)
+//! - `fn/F`         a Function: `version N`, `---`, its manifest
+//! - `fnstat/N`     node N's Function instances: `NAME INSTANCES BUSY REQUESTS COLD` lines
+//! - `data/K/HEX`   KV namespace K's value of the key (hex): not in the full
+//!                  listing, read and written when asked
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -103,12 +107,9 @@ impl Api {
         self.server_ms + (clock_ns() - self.at) / 1_000_000
     }
 
-    /// Reads every record again (nothing changes on a machine without a server).
-    pub fn refresh(&mut self) -> bool {
-        if self.local.is_some() {
-            return true;
-        }
-        let Ok((OK, b)) = self.store.raw(KV_LIST, &[b""]) else { return false };
+    /// The server's records under `prefix`: (server time, records).
+    fn list(&self, prefix: &str) -> Option<(u64, BTreeMap<String, Rec>)> {
+        let Ok((OK, b)) = self.store.raw(KV_LIST, &[prefix.as_bytes()]) else { return None };
         let mut recs = BTreeMap::new();
         let mut rest = &b[..];
         let line = |r: &mut &[u8]| {
@@ -117,7 +118,7 @@ impl Api {
             *r = &r[i + 1..];
             Some(l)
         };
-        let Some(now) = line(&mut rest) else { return false };
+        let now = line(&mut rest)?;
         while let Some(head) = line(&mut rest) {
             let w: Vec<&str> = head.split(' ').collect();
             let [k, v, u, n] = w.as_slice() else { break };
@@ -129,9 +130,41 @@ impl Api {
             rest = &rest[n + 1..];
             recs.insert(String::from(*k), Rec { version: v.parse().unwrap_or(0), updated: u.parse().unwrap_or(0), value });
         }
+        Some((now.parse().unwrap_or(0), recs))
+    }
+
+    /// Reads every record again (nothing changes on a machine without a server).
+    pub fn refresh(&mut self) -> bool {
+        if self.local.is_some() {
+            return true;
+        }
+        let Some((now, recs)) = self.list("") else { return false };
         self.recs = recs;
-        self.set_time(now.parse().unwrap_or(0));
+        self.set_time(now);
         true
+    }
+
+    /// The `data/…` records under `prefix`, read now (KV namespaces).
+    pub fn data(&self, prefix: &str) -> Vec<(String, String)> {
+        if self.local.is_some() {
+            return self.prefix(prefix).map(|(k, r)| (String::from(k), r.value.clone())).collect();
+        }
+        self.list(prefix).map(|(_, r)| r.into_iter().map(|(k, r)| (k, r.value)).collect()).unwrap_or_default()
+    }
+
+    /// Writes (Some) or deletes (None) a `data/…` record; not kept in the copy.
+    pub fn set_data(&mut self, key: &str, value: Option<&str>) -> bool {
+        if self.local.is_some() {
+            match value {
+                Some(v) => return matches!(self.put(key, None, v), Write::Done),
+                None => self.delete(key),
+            }
+            return true;
+        }
+        match value {
+            Some(v) => matches!(self.store.raw(KV_PUT, &[key.as_bytes(), b"", v.as_bytes()]), Ok((OK, _))),
+            None => self.store.raw(KV_DEL, &[key.as_bytes(), b""]).is_ok(),
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<&Rec> {
