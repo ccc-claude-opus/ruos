@@ -44,6 +44,9 @@ build_wasi() {
     done
     cargo install --quiet --root "$ROOT/target/wasi-tools" --target-dir "$ROOT/target/wasi-tools-build" \
         --target wasm32-wasip1 coreutils@0.12.0 --no-default-features --features feat_wasm 2> /dev/null || true
+    # Only the installed binary is needed again (cargo install skips what is
+    # installed): its build directory is about 500 MB.
+    rm -rf "$ROOT/target/wasi-tools-build"
     mkdir -p "$OUT/wasi-tools"
     cp "$ROOT/target/wasi-tools/bin/coreutils.wasm" "$OUT/wasi-tools/coreutils.wasm" 2> /dev/null || true
 }
