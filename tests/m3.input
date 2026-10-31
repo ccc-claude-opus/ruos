@@ -170,4 +170,12 @@ kube delete count
 kube delete cgi
 kv rm counter count
 kv get counter count || echo gone
+kube apply kube/fn-site.toml kube/fn-hello.toml
+kube get fn | grep site
+echo ingress-test: go
+sleep 16
+kube describe site | grep -i cold
+kv get visits count
+kube delete site
+kube delete hello
 exit

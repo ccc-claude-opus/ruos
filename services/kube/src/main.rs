@@ -45,8 +45,11 @@ use manifest::{Object, Restart, Template};
 libsys::entry!(main);
 
 const SEC: u64 = 1_000_000_000;
-/// Port keys: clients are 0.., dock's events EVENTS.
+/// Port keys: clients are 0.., dock's events EVENTS, the server's ingress
+/// INGRESS, answers to its requests REPLY + i.
 const EVENTS: u64 = 1 << 32;
+const INGRESS: u64 = 1 << 35;
+const REPLY: u64 = 1 << 36;
 /// The records are read again this often…
 const POLL: u64 = SEC;
 /// …and dock's pods looked at, serving pods pinged, this often.
@@ -65,6 +68,10 @@ struct Kube {
     control: Controller,
     clients: Vec<Option<Channel>>,
     leader: bool,
+    /// Requests from outside for exposed Functions (doc/ingress.md), and
+    /// the ones waiting for their answer: (request id, kube's end).
+    ingress: Option<Channel>,
+    replies: Vec<Option<(u64, Channel)>>,
 }
 
 /// How long ago server time `t` (ms) was.
@@ -341,7 +348,8 @@ impl Kube {
 
     /// Functions, and what each did on this node.
     fn get_fns(&self) -> String {
-        let mut out = format!("{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{}\n", "FUNCTION", "IMAGE", "HERE", "BUSY", "REQUESTS", "COLD", "START", "AVG");
+        let mut out =
+            format!("{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{:<7}{}\n", "FUNCTION", "IMAGE", "HERE", "BUSY", "REQUESTS", "COLD", "START", "AVG", "URL");
         let ms = |ns: u64, n: u64| if n == 0 { String::from("-") } else { format!("{}ms", ns / n / 1_000_000) };
         for (k, _) in self.api.prefix("fn/") {
             let f = &k[3..];
@@ -350,8 +358,13 @@ impl Kube {
             let busy = self.kubelet.insts.iter().filter(|x| x.func == f && matches!(x.state, funcs::State::Busy { .. })).count();
             let (req, cold, cold_ns, n, busy_ns) =
                 self.kubelet.fn_stat(f).map_or((0, 0, 0, 0, 0), |s| (s.requests, s.cold, s.cold_ns, s.answered, s.busy_ns));
+            let url = match (&self.api.fn_base, spec.expose) {
+                (Some(b), true) => format!("{b}/fn/{f}/"),
+                (None, true) => format!("/fn/{f}/"),
+                _ => String::from("-"),
+            };
             out += &format!(
-                "{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{}\n",
+                "{:<10}{:<10}{:<9}{:<6}{:<10}{:<9}{:<9}{:<7}{}\n",
                 f,
                 spec.image,
                 format!("{here}/{}", spec.max),
@@ -359,7 +372,8 @@ impl Kube {
                 req,
                 cold,
                 ms(cold_ns, cold),
-                ms(busy_ns, n)
+                ms(busy_ns, n),
+                url
             );
         }
         out
@@ -373,6 +387,9 @@ impl Kube {
         out += &format!("Args:       {}\n", none(&s.args, " "));
         out += &format!("Uses:       {}\n", none(&s.uses, ", "));
         out += &format!("Limits:     timeout {}s, max {} per node, idle {}s, reuse {}\n", s.timeout, s.max, s.idle, s.reuse);
+        if s.expose {
+            out += &format!("Exposed:    {}/fn/{name}/\n", self.api.fn_base.as_deref().unwrap_or(""));
+        }
         out += &format!("Resources:  mem {}, tasks {} (per instance)\n", s.mem, s.tasks);
         if let Some(st) = self.kubelet.fn_stat(name) {
             out += &format!(
@@ -628,6 +645,72 @@ impl Kube {
         }
     }
 
+    /// The server sent requests: `REQ ID NAME\n` + an HTTP envelope each.
+    fn ingress_message(&mut self) {
+        let Some(ing) = self.ingress else { return };
+        let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
+        loop {
+            match ing.read(&mut buf, &mut []) {
+                Ok((n, _)) => {
+                    let msg = &buf[..n];
+                    let Some(nl) = msg.iter().position(|&c| c == b'\n') else { continue };
+                    let head = String::from_utf8_lossy(&msg[..nl]).into_owned();
+                    let w: Vec<&str> = head.split(' ').collect();
+                    let ["REQ", id, name] = w.as_slice() else { continue };
+                    let Ok(id) = id.parse::<u64>() else { continue };
+                    let name = String::from(*name);
+                    if !funcs::spec(&self.api, &name).is_some_and(|(_, s)| s.expose) {
+                        self.answer(id, b"HTTP 404\nContent-Type: text/plain; charset=utf-8\n\nno such function here, or it is not exposed\n");
+                        continue;
+                    }
+                    let Ok((mine, theirs)) = Channel::create() else { continue };
+                    if mine.write(&msg[nl + 1..], &[]).is_err() {
+                        continue;
+                    }
+                    let i = kubelet::slot(&mut self.replies, (id, mine));
+                    let _ = self.port.bind(mine.0, signal::READABLE | signal::PEER_CLOSED, REPLY + i as u64);
+                    self.kubelet.fn_request(&mut self.api, &name, theirs.0);
+                }
+                Err(Error::ShouldWait) => {
+                    let _ = self.port.bind(ing.0, signal::READABLE, INGRESS);
+                    return;
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// The instance answered request `replies[i]` (or its channel closed: timed out, failed).
+    fn reply_message(&mut self, i: usize) {
+        let Some((id, c)) = self.replies.get(i).copied().flatten() else { return };
+        let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
+        let answer = match c.read(&mut buf, &mut []) {
+            Ok((n, _)) if buf[..n].starts_with(b"HTTP ") => Vec::from(&buf[..n]),
+            // A plain answer (func::serve): text.
+            Ok((n, _)) => {
+                let mut a = Vec::from(&b"HTTP 200\nContent-Type: text/plain; charset=utf-8\n\n"[..]);
+                a.extend_from_slice(&buf[..n]);
+                a
+            }
+            Err(Error::ShouldWait) => {
+                let _ = self.port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, REPLY + i as u64);
+                return;
+            }
+            Err(_) => Vec::from(&b"HTTP 504\nContent-Type: text/plain; charset=utf-8\n\nthe function did not answer (timed out or failed)\n"[..]),
+        };
+        let _ = c.close();
+        self.replies[i] = None;
+        self.answer(id, &answer);
+    }
+
+    fn answer(&self, id: u64, answer: &[u8]) {
+        if let Some(ing) = self.ingress {
+            let mut m = format!("RESP {id}\n").into_bytes();
+            m.extend_from_slice(&answer[..answer.len().min(libsys::MAX_MSG_BYTES - 64)]);
+            let _ = ing.write(&m, &[]);
+        }
+    }
+
     fn event_message(&mut self, msg: &str) {
         let w: Vec<&str> = msg.split_whitespace().collect();
         let (id, code) = match w.as_slice() {
@@ -669,7 +752,12 @@ fn main(_arg: usize) -> i64 {
         control: Controller::new(),
         clients: Vec::new(),
         leader: false,
+        ingress: ns::get("ingress").map(Channel),
+        replies: Vec::new(),
     };
+    if let Some(i) = k.ingress {
+        let _ = k.port.bind(i.0, signal::READABLE, INGRESS);
+    }
     if let Some(c) = ns::get("client") {
         k.add_client(Channel(c));
     }
@@ -688,6 +776,8 @@ fn main(_arg: usize) -> i64 {
                 }
                 let _ = k.port.bind(events.0, signal::READABLE, EVENTS);
             }
+            Ok(p) if p.key >= REPLY => k.reply_message((p.key - REPLY) as usize),
+            Ok(p) if p.key == INGRESS => k.ingress_message(),
             Ok(p) if p.key >= LINK => k.kubelet.link_message(&mut k.api, (p.key - LINK) as usize),
             Ok(p) if p.key >= LISTEN => k.kubelet.listen_message(&mut k.api, (p.key - LISTEN) as usize),
             Ok(p) => k.client_message(p.key as usize),

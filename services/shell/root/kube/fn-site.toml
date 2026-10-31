@@ -1,0 +1,8 @@
+# A Function reached from outside: expose = true gives it a URL on the
+# function port (kube get fn shows it). Open it in a browser tab.
+kind = "Function"
+name = "site"
+image = "site"
+expose = true
+timeout = 3
+uses = ["kv:visits"]

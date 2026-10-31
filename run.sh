@@ -32,7 +32,7 @@ objcopy() {
 
 # User programs (boot images until the object store): native ELF, or wasm
 # modules with an imported shared memory (threads = instances on it).
-USER_PROGRAMS=(init blk net store console shell dock kube overlay wasmrt ktest peer hello snoop fault hog writer bench worker echo greet)
+USER_PROGRAMS=(init blk net store console shell dock kube overlay wasmrt ktest peer hello snoop fault hog writer bench worker echo greet site)
 ARCHES=(riscv64 aarch64 wasm)
 WASM_USER_FLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
  -C link-arg=--import-memory -C link-arg=--shared-memory -C link-arg=--max-memory=67108864 \

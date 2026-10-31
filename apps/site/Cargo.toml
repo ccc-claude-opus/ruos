@@ -1,0 +1,13 @@
+[package]
+name = "site"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "site"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }

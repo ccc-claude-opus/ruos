@@ -62,12 +62,15 @@ const srv = serverUrl
       '--http-allow', `127.0.0.1:${webPort}`], {
       stdio: ['ignore', 'pipe', 'inherit'],
     });
+let fnBase = null;
 const base = serverUrl ?? await new Promise((resolve, reject) => {
   let buf = '';
   srv.stdout.on('data', (d) => {
     buf += d;
+    const f = buf.match(/functions on (http:\/\/\S+)\/fn\//);
+    if (f) fnBase = f[1];
     const m = buf.match(/listening on (http:\/\/\S+)/);
-    if (m) resolve(m[1]);
+    if (m && f) resolve(m[1]);
   });
   srv.on('exit', (c) => reject(new Error(`the server exited (${c})`)));
 }).catch((e) => fail(e.message));
@@ -102,6 +105,7 @@ const worker = new Worker(path.join(here, 'node_worker.mjs'), { workerData: { wa
 let out = '';
 let typed = false;
 let snapshotLine = 'snapshot: none';
+let ingressTested = false;
 const timeout = setTimeout(() => fail('timeout'), Number(process.env.BOOT_TIMEOUT_MS ?? 300000));
 worker.on('message', (m) => {
   if (m.type === 'out') {
@@ -113,6 +117,11 @@ worker.on('message', (m) => {
       worker.postMessage({ type: 'snapshot' });
       const script = fs.readFileSync(input, 'utf8').replaceAll('@HTTP_PORT@', String(webPort));
       worker.postMessage({ type: 'key', bytes: [...Buffer.from(script)] });
+    }
+    // The script says when its exposed Functions are there: requests from outside.
+    if (!ingressTested && fnBase && /^ingress-test: go$/m.test(out)) {
+      ingressTested = true;
+      ingressTest().catch((e) => console.log(`ingress: failed: ${e.message}`));
     }
   } else if (m.type === 'snapshot') {
     // The page's system view: the shell's channels lead to console, store and dock.
@@ -138,6 +147,45 @@ worker.on('message', (m) => {
   }
 });
 worker.on('error', (e) => fail(e.stack));
+
+// Requests from outside to the function port (doc/ingress.md), printed as
+// `ingress: …` lines for tests/m23.expect.
+async function ingressTest() {
+  const say = (s) => console.log(`ingress: ${s}`);
+  let r = await fetch(`${fnBase}/fn/site/api/hello?name=ruos`);
+  say(`hello ${r.status} ${(await r.text()).trim()} node=${r.headers.get('x-ruos-node')}`);
+  for (let i = 0; i < 2; i++) {
+    r = await fetch(`${fnBase}/fn/site/api/hit`, { method: 'POST' });
+    say(`hit ${r.status} ${r.headers.get('content-type')} ${(await r.text()).trim()}`);
+  }
+  r = await fetch(`${fnBase}/fn/site/`);
+  const page = await r.text();
+  say(`page ${r.status} ${r.headers.get('content-type')} ${page.includes('<h1>') ? 'has h1' : 'no h1'}`);
+  r = await fetch(`${fnBase}/fn/hello/`);
+  say(`not exposed ${r.status}`);
+  r = await fetch(`${fnBase}/fn/nosuch/`);
+  say(`no such ${r.status}`);
+  r = await fetch(`${fnBase}/`);
+  say(`list ${r.status} ${(await r.text()).includes('/fn/site/') ? 'lists site' : 'no site'}`);
+  r = await fetch(`${fnBase}/fn/site/api/sleep?s=8`);
+  say(`slow ${r.status}`);
+  // Only the OS's own pages may use the server's machine endpoints.
+  const raw = (pathname, headers) =>
+    new Promise((resolve) => {
+      const u = new URL(base);
+      http.get({ host: u.hostname, port: u.port, path: pathname, headers }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      }).on('error', () => resolve('error'));
+    });
+  say(`ingress from another origin ${await raw('/v1/ingress/next?machine=x&session=y', { Origin: 'http://evil.example' })}`);
+  say(`ingress from the function port ${await raw('/v1/ingress/next?machine=x&session=y', { 'Sec-Fetch-Site': 'same-site' })}`);
+  say(`websocket from another origin ${await raw('/v1/remote?machine=x', {
+    Origin: 'http://evil.example', Connection: 'Upgrade', Upgrade: 'websocket',
+    'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+  })}`);
+  say('done');
+}
 
 // What the machine left on the server: the pods' writable layers, and the
 // image `dock push` sent to the registry.

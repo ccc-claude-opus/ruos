@@ -360,7 +360,10 @@ impl Session {
                         .map(|_| reply(OK, b""))
                 }
             }
-            KV_HELLO => Ok(reply(OK, format!("{} {} {}", self.machine, self.id, cluster::now_ms()).as_bytes())),
+            KV_HELLO => {
+                let fns = crate::fn_base().unwrap_or_else(|| String::from("-"));
+                Ok(reply(OK, format!("{} {} {} {fns}", self.machine, self.id, cluster::now_ms()).as_bytes()))
+            }
             KV_LIST => {
                 let p = decode(msg, 1).map(|(_, f)| text(f[0]).to_string()).unwrap_or_default();
                 Ok(cluster::with(&self.store, |kv| {

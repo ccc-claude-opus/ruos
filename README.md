@@ -39,7 +39,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十五課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十六課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -56,6 +56,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 1. **叢集**：另開一頁 `?machine=b2` 多一個節點、`kube get nodes`、pod 分到哪台、關掉那頁看 pod 搬家
 1. **上網**：`curl https://example.com | head`、`curl -o`、server 拒絕連內網、`http` 這個 capability
 1. **函式（serverless）**：`kind = "Function"`、`fn call` 的冷 / 熱啟動、閒置縮到 0、timeout、`kv:counter`
+1. **從外面呼叫函式**：`expose = true`、函式埠的網址、請求送到哪台機器、關掉所有分頁就是 503
 
 「叢集」頁畫出 server 上 kube 的記錄：每個節點（機器）一張卡片，列出分到它的 pod 與狀態，下面是 Deployment 與最近的事件。
 
@@ -237,6 +238,8 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `fn call` | `fn call NAME [TEXT...]` | 呼叫一個函式，印出回答 |
 | `fn ls` | `fn ls` | 同 `kube get fn`：instance、請求數、冷啟動次數與時間 |
 | `kv` | `kv ls NS [PREFIX]` / `kv get NS KEY` / `kv put NS KEY VALUE...` / `kv rm NS KEY` | KV namespace 的內容 |
+
+**從外面呼叫**：寫了 `expose = true` 的函式，在 ruos serve 的函式埠（預設主埠加 10，例如 `http://127.0.0.1:8790/fn/NAME/`）有網址，`kube get fn` 的 URL 欄和「叢集」頁都會列出來。請求由 server 送進一台機器（已經有 instance 的優先），函式用 `libsys::func::serve_http` 拿到 method、path、query、headers、body。函式埠和 OS 的頁面是不同的 origin，函式的網頁碰不到 OS 的連線。沒有任何機器（分頁）開著時回 503。設計見 [doc/ingress.md](doc/ingress.md)。
 
 **Service 沒有位址**：`serves = "echo"` 的 pod 是 service echo；`uses = ["echo"]` 的 pod 名稱空間裡才有 `svc:echo`，沒列的就連不到（預設全部拒絕）。連線時 kube 把一條新 channel 的一端交給一個 ready 的 pod，之後兩邊直接談。kube 每 2 s ping 一次，不回應的 pod 不再分到連線，7 s 後重啟。**Config**（`kind = "Config"`，`[files]`、`[env]`）疊成映像上的一層；改了 Config 或範本就會滾動更新：先多一個新 pod，它 ready 了再移除一個舊的。
 

@@ -65,7 +65,8 @@ pub const OBJ_MEM: u8 = 26;
 /// Largest object or file carried in one message.
 pub const MAX_INLINE: usize = 60000;
 /// The cluster's records on the server (kube), forwarded as they are:
-/// [KV_HELLO] → [OK, `MACHINE SESSION NOW_MS`];
+/// [KV_HELLO] → [OK, `MACHINE SESSION NOW_MS FN_BASE`] (FN_BASE: `http://ADDR:PORT` of
+/// the function port, or `-`);
 pub const KV_HELLO: u8 = 40;
 /// [KV_LIST, prefix] → [OK, `NOW_MS\n` + per record `KEY VERSION UPDATED_MS LEN\n` + value + `\n`]
 /// (an empty prefix leaves out `data/…`, the KV namespaces);

@@ -67,6 +67,8 @@ pub struct Api {
     local: Option<u64>,
     pub node: String,
     pub session: String,
+    /// Where exposed Functions are reached from outside (`http://ADDR:PORT`).
+    pub fn_base: Option<String>,
     pub recs: BTreeMap<String, Rec>,
     /// Server time at `at` (clock_ns), to tell the time between refreshes.
     server_ms: u64,
@@ -75,7 +77,8 @@ pub struct Api {
 
 impl Api {
     pub fn new(store: Store) -> Api {
-        let mut api = Api { store, local: None, node: String::new(), session: String::new(), recs: BTreeMap::new(), server_ms: 0, at: 0 };
+        let mut api =
+            Api { store, local: None, node: String::new(), session: String::new(), fn_base: None, recs: BTreeMap::new(), server_ms: 0, at: 0 };
         match api.store.raw(KV_HELLO, &[]) {
             Ok((OK, b)) => {
                 let s = String::from_utf8_lossy(&b).into_owned();
@@ -83,6 +86,7 @@ impl Api {
                 api.node = String::from(*w.first().unwrap_or(&"node"));
                 api.session = String::from(*w.get(1).unwrap_or(&""));
                 api.set_time(w.get(2).and_then(|t| t.parse().ok()).unwrap_or(0));
+                api.fn_base = w.get(3).filter(|b| b.starts_with("http")).map(|b| String::from(*b));
             }
             _ => {
                 api.local = Some(0);

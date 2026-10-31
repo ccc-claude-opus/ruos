@@ -1,0 +1,6 @@
+# site: an example exposed Function (a small web page and API) for kube.
+name = "site"
+entry = "/bin/site"
+
+[programs]
+"/bin/site" = "site"

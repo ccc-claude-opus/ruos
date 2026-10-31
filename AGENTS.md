@@ -70,7 +70,8 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**
   20. 網頁的「叢集」分頁與第 11–13 課 — **完成**
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
-  22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`；對外入口 `/fn/NAME` 是 server 類型，之後另外設計）
+  22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
+  23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -108,6 +109,12 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - `libsys/src/func.rs`：`serve(|req| answer)`（說 ready、等 `conn`、讀一則訊息、回一則、說 done）、`call(name, req, timeout)`。`libsys/src/kv.rs`：`Kv`（`get/put/delete/list`；key ≤ 64 bytes、value ≤ 32 KiB 文字）。
   - KV：kubelet 把 `kv:K` 的請求變成 server 記錄 `data/K/HEX(key)`，每次直接讀寫 server（`Api::data` / `set_data`），不進每秒的快取：server 的 `KV_LIST ""` 不列 `data/`（要明說 prefix）。沒有 server 時放在 kube 的記憶體。
   - shell：`fn call NAME [TEXT]`（等 60 s）、`fn ls`、`kv ls|get|put|rm NS …`（每次經 kube 的 `connect kv:NS` 拿一條）。kube：`get fn`、`describe F`、`delete F`。`apps/greet`（記憶體裡的計數 + 有 `kv:counter` 就加 KV 計數；`sleep N` 請求）。範例 `fn-hello.toml`（idle 15、max 2、timeout 3）、`fn-count.toml`、`fn-cgi.toml`（reuse false）。測試 `tests/m22.expect`。網頁：節點卡片列出函式 instance、函式表；第 15 課。
+- **M23（對外入口）**：設計與實作時的改動見 `doc/ingress.md`。
+  - ruos serve：`--fn-port N`（預設主埠 + 10；`--port 0` 時也是 0），印 `ruos: functions on http://ADDR:PORT/fn/`；`functions()` 另開一個 tiny_http（只有 `/fn/NAME/…` 與 `/` 列出公開的函式）。`ruos/src/ingress.rs`：機器（依 session）的佇列與 long poll（`next` 最多等 20 s；`put_back`）、`call`（讀 `fnstat/` 挑有熱 instance 的機器，否則輪流；等 timeout + 15 s，否則 504；沒有機器 503）、`answer`、`exposed`（讀 `fn/NAME` 的 `expose` / `timeout`）。`/v1/ingress/next`、`POST /v1/ingress/answer`。`own_origin` 擋 `/v1/remote` 與 `/v1/ingress` 的跨 origin（含 `Sec-Fetch-Site: same-site`）。函式的回應加 `X-Ruos-Node`；去掉 hop-by-hop header；body ≤ 60000。log：`ruos: fn NAME METHOD PATH → MACHINE: STATUS (N ms)`。
+  - 核心：remote channel 有編號（`Channel.remote: Option<u8>`，`arch::remote_channel(i)` / `remote_send(i, …)`，wasm imports `remote_open(i)` / `remote_send(i, p, len)`、export `kernel_remote(i, len)`）；init 拿到 handle 3（server 連線）與 4（ingress），init 把第一個 channel 給 store 當 `remote`、第二個給 kube 當 `ingress`。`kernel_host.js` 的 `ingressLink`（long poll + POST，和 remote 同一個 session）。
+  - kube：`ingress` 上的 `REQ ID NAME\n` + 封包 → 檢查 `expose` → 自己建 channel 寫入封包、交給 `fn_request`，回答（或 channel 關掉 = 504）以 `RESP ID\n` + 封包送回；不是 `HTTP ` 開頭的回答包成 `200 text/plain`。`kube get fn` 多 URL 欄（`Api.fn_base`，來自 `KV_HELLO` 第四欄）。
+  - libsys `func::serve_http`、`Request`（`parse`、`header`、`param`；`fn call` 的純文字 = method `CALL`）、`Response`（`text`、`html`、`json`、`encode`）。`apps/site`（網頁 + `/api/hello`、`/api/hit`（kv:visits）、`/api/sleep`）、`fn-site.toml`。
+  - 測試：boot.mjs 讀出函式埠，看到輸出 `ingress-test: go` 後自己送請求，印 `ingress: …`（`tests/m23.expect`）。網頁的函式表有連結；第 16 課。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）

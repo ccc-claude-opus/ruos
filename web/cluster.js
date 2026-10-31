@@ -66,7 +66,7 @@ export class ClusterView {
     this.draw(JSON.parse(text));
   }
 
-  draw({ now, records }) {
+  draw({ now, records, fn_port: fnPort }) {
     const get = (k) => records[k];
     const prefix = (p) => Object.entries(records).filter(([k]) => k.startsWith(p)).map(([k, r]) => [k.slice(p.length), r]);
     const leader = fields(get('leader')?.value).node;
@@ -90,7 +90,7 @@ export class ClusterView {
     // Functions: instances are each node's own (fnstat/NODE: `NAME N BUSY REQUESTS COLD` lines).
     const fns = prefix('fn/').map(([name, r]) => {
       const m = (k) => r.value.match(new RegExp(`^${k} = "?([^"\\n]*)"?`, 'm'))?.[1];
-      return { name, image: m('image'), max: m('max') || '4', idle: m('idle') || '30' };
+      return { name, image: m('image'), max: m('max') || '4', idle: m('idle') || '30', expose: m('expose') === 'true' };
     });
     const fnstat = Object.fromEntries(prefix('fnstat/').map(([node, r]) => [node, r.value.split('\n').filter(Boolean).map((l) => {
       const [name, n, busy, requests, cold] = l.split(' ');
@@ -159,13 +159,16 @@ export class ClusterView {
     if (fns.length) {
       out.push(el('h3', {}, '函式（Function）'));
       const t = el('table');
-      t.append(el('tr', {}, el('th', {}, '名稱'), el('th', {}, '映像'), el('th', {}, 'instance（各節點）'), el('th', {}, '請求'), el('th', {}, '冷啟動')));
+      t.append(el('tr', {}, el('th', {}, '名稱'), el('th', {}, '映像'), el('th', {}, 'instance（各節點）'), el('th', {}, '請求'), el('th', {}, '冷啟動'), el('th', {}, '網址')));
       for (const f of fns) {
         const per = Object.entries(fnstat).map(([node, l]) => [node, l.find((x) => x.name === f.name)]).filter(([, x]) => x);
         const where = per.map(([node, x]) => `${node}: ${x.n}`).join('，') || '0（縮到 0）';
         const sum = (k) => per.reduce((a, [, x]) => a + x[k], 0);
+        // Exposed ones are on the function port: another origin than this page.
+        const url = f.expose && fnPort ? `${location.protocol}//${location.hostname}:${fnPort}/fn/${f.name}/` : null;
+        const link = url ? el('a', { href: url, target: '_blank', rel: 'noopener' }, url) : '—';
         t.append(el('tr', {}, el('td', { class: 'mono' }, f.name), el('td', { class: 'mono' }, f.image || '?'), el('td', {}, where),
-          el('td', {}, String(sum('requests'))), el('td', {}, String(sum('cold')))));
+          el('td', {}, String(sum('requests'))), el('td', {}, String(sum('cold'))), el('td', { class: 'mono' }, link)));
       }
       out.push(t);
       out.push(el('p', { class: 'hint' }, '函式沒有固定的 pod：請求來了才在那台機器上冷啟動，閒置一段時間就收掉。'));

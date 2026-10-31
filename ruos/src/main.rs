@@ -22,13 +22,22 @@
 //! side's own network, unless `--http-allow ADDR:PORT`; `--no-http` turns
 //! them off.
 //!   GET /v1/cluster         the cluster's records (kube), JSON:
-//!                           {"now": MS, "records": {KEY: {"version", "updated", "value"}}}
+//!                           {"now": MS, "fn_port": N, "records": {KEY: {"version", "updated", "value"}}}
+//!   GET /v1/ingress/next?machine=NAME&session=ID, POST /v1/ingress/answer
+//!                           requests from outside for Functions (ingress.rs)
+//! The WebSockets and the ingress only take requests from this origin
+//! (pages elsewhere, such as Functions' own pages, cannot use them).
+//!
+//! Functions (kube's `expose = true`) on their own port, `--fn-port N`
+//! (default: the port + 10), so their pages are another origin:
+//!   ANY /fn/NAME/PATH       the Function's answer (doc/ingress.md)
+//!   GET /                   the exposed Functions
 //!
 //! `--port 0` picks a free port; the URL is printed as
 //! `ruos: listening on http://ADDR:PORT`. Data (the registry, disks,
 //! writable layers) lives in `$RUOS_HOME`, else `~/.ruos`.
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,6 +50,7 @@ use tungstenite::{Message, WebSocket};
 mod assets;
 mod cluster;
 mod http;
+mod ingress;
 mod id;
 mod remote;
 
@@ -58,7 +68,7 @@ const USAGE: &str = "usage:
   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
   ruos riscv64 | aarch64 [--smp N]     the OS in QEMU (qemu-system-riscv64 / -aarch64 needed)
   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
-             [--no-http] [--http-allow ADDR:PORT]...";
+             [--fn-port N] [--no-http] [--http-allow ADDR:PORT]...";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -72,6 +82,7 @@ fn main() {
     let mut cfg = Config { web: None, kernel: None, store: None };
     let (mut open, mut smp) = (true, 4u32);
     let mut http = http::Settings { enabled: true, allow: Vec::new() };
+    let mut fn_port = None;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| usage(&format!("{a} needs a value")));
@@ -81,6 +92,7 @@ fn main() {
             "--web" if cmd == "serve" => cfg.web = Some(PathBuf::from(val())),
             "--kernel" if cmd == "serve" => cfg.kernel = Some(PathBuf::from(val())),
             "--no-http" => http.enabled = false,
+            "--fn-port" if cmd != "riscv64" && cmd != "aarch64" => fn_port = Some(val().parse().unwrap_or_else(|_| usage("bad --fn-port"))),
             "--http-allow" => http.allow.push(val().parse().unwrap_or_else(|_| usage("bad --http-allow (ADDR:PORT)"))),
             "--store" if cmd == "serve" => cfg.store = Some(PathBuf::from(val())),
             "--no-open" if cmd == "web" => open = false,
@@ -95,6 +107,7 @@ fn main() {
             cfg.web = Some(PathBuf::from("web"));
         }
         let server = listen(&bind, port);
+        functions(&bind, fn_port.unwrap_or(if port == 0 { 0 } else { port.saturating_add(10) }), cfg.store.clone());
         return run_server(server, cfg);
     }
     if !assets::present() {
@@ -106,6 +119,7 @@ fn main() {
     let cfg = Config { web: None, kernel: None, store: Some(store) };
     if cmd == "web" {
         let server = listen(&bind, port);
+        functions(&bind, fn_port.unwrap_or(port.saturating_add(10)), cfg.store.clone());
         let url = format!("http://{}/", server.server_addr());
         println!("ruos: the OS is at {url} (Ctrl-C stops it); data in {}", home.display());
         if open {
@@ -136,6 +150,136 @@ fn listen(bind: &str, port: u16) -> Server {
     println!("ruos: listening on http://{}", server.server_addr());
     let _ = std::io::stdout().flush();
     server
+}
+
+static FN_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+static FN_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `http://ADDR:PORT` of the function port, if there is one (for kube's `get fn`).
+pub fn fn_base() -> Option<String> {
+    FN_BASE.get().cloned()
+}
+
+/// The function port: `/fn/NAME/…` to a machine's kube (ingress.rs).
+fn functions(bind: &str, port: u16, store: Option<PathBuf>) {
+    let Some(store) = store else { return };
+    let server = match Server::http((bind, port)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("ruos: functions: {bind}:{port}: {e} (no function port)");
+            return;
+        }
+    };
+    let addr = server.server_addr().to_string();
+    if let Some(p) = addr.rsplit(':').next().and_then(|p| p.parse().ok()) {
+        let _ = FN_PORT.set(p);
+    }
+    let _ = FN_BASE.set(format!("http://{addr}"));
+    println!("ruos: functions on http://{addr}/fn/");
+    let _ = std::io::stdout().flush();
+    let store = Arc::new(store);
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let store = store.clone();
+            thread::spawn(move || function_request(req, &store));
+        }
+    });
+}
+
+/// Headers that belong to one connection, not to the request or answer.
+fn hop_by_hop(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection" | "keep-alive" | "transfer-encoding" | "upgrade" | "te" | "trailer" | "content-length" | "proxy-connection" | "proxy-authorization"
+    )
+}
+
+fn plain(req: Request, status: u16, text: &str) {
+    let r = Response::from_data(text.as_bytes().to_vec()).with_status_code(status).with_header(header("Content-Type", "text/plain; charset=utf-8"));
+    let _ = req.respond(r);
+}
+
+fn function_request(mut req: Request, store: &Path) {
+    let url = req.url().to_string();
+    let (path, query) = url.split_once('?').unwrap_or((&url, ""));
+    if path == "/" {
+        let mut out = String::from("Functions here (kube apply one with expose = true):\n");
+        for n in ingress::list(store) {
+            out += &format!("  /fn/{n}/\n");
+        }
+        return plain(req, 200, &out);
+    }
+    let Some(rest) = path.strip_prefix("/fn/") else { return plain(req, 404, "not found: Functions are at /fn/NAME/\n") };
+    let (name, sub) = rest.split_once('/').map_or((rest, String::from("/")), |(n, s)| (n, format!("/{s}")));
+    if !name_ok(name) {
+        return plain(req, 404, "bad function name\n");
+    }
+    let Some(timeout) = ingress::exposed(store, name) else {
+        return plain(req, 404, &format!("no function {name} (or it is not exposed: expose = true)\n"));
+    };
+    let mut body = Vec::new();
+    let _ = req.as_reader().take(ingress::MAX_BODY as u64 + 1).read_to_end(&mut body);
+    if body.len() > ingress::MAX_BODY {
+        return plain(req, 413, &format!("a request is at most {} bytes\n", ingress::MAX_BODY));
+    }
+    // The HTTP envelope (doc/ingress.md).
+    let mut env = format!("{} {sub}{}{query}\n", req.method().as_str(), if query.is_empty() { "" } else { "?" });
+    for h in req.headers() {
+        if !hop_by_hop(h.field.as_str().as_str()) {
+            env += &format!("{}: {}\n", h.field.as_str(), h.value.as_str());
+        }
+    }
+    env.push('\n');
+    let mut env = env.into_bytes();
+    env.extend_from_slice(&body);
+    let t0 = std::time::Instant::now();
+    let (machine, answer) = match ingress::call(store, name, timeout, &env) {
+        Ok(a) => a,
+        Err(ingress::Failed::NoMachine) => {
+            eprintln!("ruos: fn {name}: no machine (503)");
+            return plain(req, 503, "no machine is running: open the OS in a browser tab (or a machine) to serve Functions\n");
+        }
+        Err(ingress::Failed::TimedOut) => {
+            eprintln!("ruos: fn {name}: no answer in time (504)");
+            return plain(req, 504, "the function did not answer in time\n");
+        }
+    };
+    // `HTTP STATUS\n` + header lines + `\n` + body, else all of it is text.
+    let (status, headers, body) = match answer.strip_prefix(b"HTTP ") {
+        Some(rest) => {
+            let end = rest.windows(2).position(|w| w == b"\n\n").map_or(rest.len(), |i| i + 2);
+            let head = String::from_utf8_lossy(&rest[..end]).into_owned();
+            let mut lines = head.lines();
+            let status = lines.next().and_then(|s| s.trim().parse::<u16>().ok()).unwrap_or(200);
+            let hs: Vec<(String, String)> = lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect();
+            (status, hs, rest[end.min(rest.len())..].to_vec())
+        }
+        None => (200, vec![(String::from("Content-Type"), String::from("text/plain; charset=utf-8"))], answer),
+    };
+    eprintln!("ruos: fn {name} {} {sub} → {machine}: {status} ({} ms)", req.method().as_str(), t0.elapsed().as_millis());
+    let mut r = Response::from_data(body).with_status_code(status).with_header(header("X-Ruos-Node", &machine));
+    for (k, v) in headers {
+        if !hop_by_hop(&k)
+            && let Ok(h) = Header::from_bytes(k.as_bytes(), v.as_bytes())
+        {
+            r = r.with_header(h);
+        }
+    }
+    let _ = req.respond(r);
+}
+
+/// A request from this server's own pages: no Origin, or this one; not from
+/// a page of another site (or of the function port, which is the same site).
+fn own_origin(req: &Request) -> bool {
+    let get = |n: &'static str| req.headers().iter().find(|h| h.field.equiv(n)).map(|h| h.value.as_str().to_string());
+    if get("Sec-Fetch-Site").is_some_and(|s| s != "same-origin" && s != "none") {
+        return false;
+    }
+    match (get("Origin"), get("Host")) {
+        (None, _) => true,
+        (Some(o), Some(h)) => o == format!("http://{h}") || o == format!("https://{h}"),
+        (Some(_), None) => false,
+    }
 }
 
 fn run_server(server: Server, cfg: Config) {
@@ -250,20 +394,54 @@ fn respond(req: Request, status: u16, ctype: &str, cache: &str, body: Vec<u8>) {
     let _ = req.respond(r);
 }
 
-fn serve(req: Request, cfg: &Config) {
+fn serve(mut req: Request, cfg: &Config) {
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let path = path.split('#').next().unwrap_or("/");
     let method = req.method().as_str().to_string();
+    if path.starts_with("/v1/remote") || path.starts_with("/v1/ingress") {
+        if !own_origin(&req) {
+            return respond(req, 403, "text/plain", "no-cache", b"only from this server's own pages\n".to_vec());
+        }
+    }
+    if path == "/v1/ingress/answer" && method == "POST" {
+        let mut body = Vec::new();
+        let _ = req.as_reader().take(ingress::MAX_BODY as u64 + 4096).read_to_end(&mut body);
+        let ok = ingress::answer(&body);
+        return respond(req, if ok { 204 } else { 404 }, "text/plain", "no-cache", Vec::new());
+    }
     if method != "GET" && method != "HEAD" {
         return respond(req, 405, "text/plain", "no-cache", b"method not allowed\n".to_vec());
     }
     if path == "/v1/remote" {
         return remote_channel(req, cfg, query);
     }
+    if path == "/v1/ingress/next" {
+        let q = |k: &str| query.split('&').find_map(|kv| kv.strip_prefix(&format!("{k}="))).unwrap_or("").to_string();
+        let (machine, session) = (q("machine"), q("session"));
+        if !name_ok(&machine) || !name_ok(&session) {
+            return respond(req, 400, "text/plain", "no-cache", b"machine and session\n".to_vec());
+        }
+        let session = format!("w-{session}");
+        let msgs = ingress::next(&session, &machine);
+        if msgs.is_empty() {
+            return respond(req, 204, "text/plain", "no-cache", Vec::new());
+        }
+        let mut out = Vec::new();
+        for m in &msgs {
+            out.extend_from_slice(format!("{}\n", m.len()).as_bytes());
+            out.extend_from_slice(m);
+        }
+        let r = Response::from_data(out).with_status_code(200).with_header(header("Content-Type", "application/octet-stream"));
+        // The page went away while it waited: the requests go to the next poll.
+        if req.respond(r).is_err() {
+            ingress::put_back(&session, msgs);
+        }
+        return;
+    }
     if path == "/v1/cluster" {
         let Some(store) = cfg.store.as_ref() else { return respond(req, 404, "text/plain", "no-cache", b"no store\n".to_vec()) };
-        return respond(req, 200, "application/json", "no-cache", cluster::json(store).into_bytes());
+        return respond(req, 200, "application/json", "no-cache", cluster::json(store, FN_PORT.get().copied()).into_bytes());
     }
     if let Some(r) = path.strip_prefix("/v1/") {
         return match registry(cfg, r) {

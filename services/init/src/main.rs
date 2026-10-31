@@ -29,15 +29,18 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
 }
 
 /// The drivers and the store service, started straight from the pack.
-/// The store, its `web` client (the http capability, for the shell) and a
-/// client of the net service for the shell (if there is one).
-fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>)> {
+/// The store, its `web` client (the http capability, for the shell), a
+/// client of the net service for the shell (if there is one) and the
+/// ingress channel from the server (for kube; wasm32).
+fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>, Option<Channel>)> {
     let size = pack_mem.size().ok()?;
     let mut bytes = alloc::vec![0u8; size as usize];
     pack_mem.read(0, &mut bytes).ok()?;
     let pack = Pack::parse(&bytes, false).ok()?;
     let mut ns = Namespace::new();
     let mut net = None;
+    let mut ingress = None;
+    let mut have_remote = false;
     // Devices (Mmio + Irq) or the server channel follow the quota. Take
     // stock first: starting a driver moves handles away.
     let mut found = alloc::vec::Vec::new();
@@ -66,12 +69,17 @@ fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>)> {
                     _ => {}
                 }
             }
-            ObjType::Channel => ns = ns.add("remote", Handle(h)),
+            // The server connection first (the store's), then ingress (kube's).
+            ObjType::Channel if !have_remote => {
+                ns = ns.add("remote", Handle(h));
+                have_remote = true;
+            }
+            ObjType::Channel => ingress = Some(Channel(Handle(h))),
             _ => {}
         }
     }
     let (web, web_srv) = Channel::create().ok()?;
-    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, net))
+    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, net, ingress))
 }
 
 /// A new client channel of the console.
@@ -82,7 +90,7 @@ fn console_client(con: &Console) -> Option<Handle> {
 }
 
 fn main(_arg: usize) -> i64 {
-    let Some((store, web, net)) = start_store(Memory(Handle(1))) else {
+    let Some((store, web, net, ingress)) = start_store(Memory(Handle(1))) else {
         println!("init: cannot start the store");
         return 1;
     };
@@ -120,7 +128,10 @@ fn main(_arg: usize) -> i64 {
     let Ok(ks) = store.connect() else { return 1 };
     // kube hands `http` on to the programs that use it.
     let Ok(kh) = libsys::http::Http(web).connect() else { return 1 };
-    let ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("http", kh.0.0).add("client", kube_srv.0);
+    let mut ns = Namespace::new().add("dock", kd.0).add("store", ks.0.0).add("http", kh.0.0).add("client", kube_srv.0);
+    if let Some(i) = ingress {
+        ns = ns.add("ingress", i.0);
+    }
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };

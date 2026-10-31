@@ -75,8 +75,8 @@ fn quote(s: &str) -> String {
     o
 }
 
-/// Every record, for the web page's cluster view.
-pub fn json(store: &Path) -> String {
+/// Every record, for the web page's cluster view (and where Functions are reached).
+pub fn json(store: &Path, fn_port: Option<u16>) -> String {
     with(store, |kv| {
         let recs: Vec<String> = kv
             .recs
@@ -86,7 +86,8 @@ pub fn json(store: &Path) -> String {
                 format!("{}:{{\"version\":{},\"updated\":{},\"value\":{}}}", quote(k), r.version, r.updated, quote(&v))
             })
             .collect();
-        format!("{{\"now\":{},\"records\":{{{}}}}}", now_ms(), recs.join(","))
+        let port = fn_port.map_or(String::from("null"), |p| p.to_string());
+        format!("{{\"now\":{},\"fn_port\":{port},\"records\":{{{}}}}}", now_ms(), recs.join(","))
     })
 }
 

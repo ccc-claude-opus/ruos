@@ -318,8 +318,12 @@ pub fn start_init(info: &crate::boot::BootInfo) {
         handles.push(Handle { obj: Object::Mmio(m), rights: Rights::ALL });
         handles.push(Handle { obj: Object::Irq(i), rights: Rights::ALL });
     }
-    if let Some(r) = arch::remote_channel() {
+    if let Some(r) = arch::remote_channel(0) {
         crate::println!("task: server connection for init (handle 3)");
+        handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
+    }
+    if let Some(r) = arch::remote_channel(1) {
+        crate::println!("task: ingress from the server for init (handle 4)");
         handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
     }
     crate::println!("task: root quota {} MiB", root.info().mem_limit >> 20);

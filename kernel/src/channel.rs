@@ -18,8 +18,9 @@ pub struct Msg {
 
 pub struct Channel {
     peer: IrqLock<Weak<Channel>>,
-    /// The other end is the host (wasm32: podsrv over a WebSocket).
-    remote: bool,
+    /// The other end is the host (wasm32: ruos serve over a WebSocket):
+    /// 0 = the server connection (the store's), 1 = ingress (kube's).
+    remote: Option<u8>,
     queue: IrqLock<VecDeque<Msg>>,
     pub sig: SignalCell,
 }
@@ -35,7 +36,7 @@ impl Channel {
         let new = || {
             Arc::new(Channel {
                 peer: IrqLock::new(Weak::new()),
-                remote: false,
+                remote: None,
                 queue: IrqLock::new(VecDeque::new()),
                 sig: SignalCell::new(signal::WRITABLE),
             })
@@ -49,17 +50,17 @@ impl Channel {
     /// An endpoint whose peer is the host: its messages leave through
     /// `arch::remote_send`, the host's arrive through `deliver`.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub fn remote() -> Arc<Channel> {
+    pub fn remote(i: u8) -> Arc<Channel> {
         Arc::new(Channel {
             peer: IrqLock::new(Weak::new()),
-            remote: true,
+            remote: Some(i),
             queue: IrqLock::new(VecDeque::new()),
             sig: SignalCell::new(signal::WRITABLE),
         })
     }
 
     pub fn is_remote(&self) -> bool {
-        self.remote
+        self.remote.is_some()
     }
 
     /// A message from the host.
@@ -75,12 +76,12 @@ impl Channel {
 
     /// Queues `m` on the peer; gives it back if that is not possible.
     pub fn write(&self, m: Msg) -> Result<(), (Error, Msg)> {
-        if self.remote {
+        if let Some(i) = self.remote {
             // Only bytes can leave the machine.
             if !m.handles.is_empty() {
                 return Err((Error::InvalidArgs, m));
             }
-            return crate::arch::remote_send(&m.data).map_err(|e| (e, m));
+            return crate::arch::remote_send(i, &m.data).map_err(|e| (e, m));
         }
         let Some(p) = self.peer() else { return Err((Error::PeerClosed, m)) };
         {
@@ -98,7 +99,7 @@ impl Channel {
     pub fn peek(&self) -> Result<(usize, usize), Error> {
         match self.queue.lock().front() {
             Some(m) => Ok((m.data.len(), m.handles.len())),
-            None if self.peer().is_none() && !self.remote => Err(Error::PeerClosed),
+            None if self.peer().is_none() && self.remote.is_none() => Err(Error::PeerClosed),
             None => Err(Error::ShouldWait),
         }
     }

@@ -35,8 +35,8 @@ pub mod host {
         pub fn user_read(task: u32, va: u32, len: u32, dst: *mut u8) -> i32;
         pub fn user_write(task: u32, va: u32, src: *const u8, len: u32) -> i32;
         /// 1 if the host has a server connection for `remote_send`.
-        pub fn remote_open() -> u32;
-        pub fn remote_send(p: *const u8, len: usize);
+        pub fn remote_open(i: u32) -> u32;
+        pub fn remote_send(i: u32, p: *const u8, len: usize);
     }
 }
 
@@ -303,18 +303,21 @@ pub fn shutdown(code: u32) -> ! {
     core::arch::wasm32::unreachable()
 }
 
-static REMOTE: crate::sync::IrqLock<Option<alloc::sync::Arc<crate::channel::Channel>>> = crate::sync::IrqLock::new(None);
+/// The host's channels to the server: 0 = the server connection (the
+/// store asks, the server answers), 1 = ingress (the server sends requests
+/// from outside, kube answers).
+static REMOTE: crate::sync::IrqLock<[Option<alloc::sync::Arc<crate::channel::Channel>>; 2]> = crate::sync::IrqLock::new([None, None]);
 
-/// The channel to the server, if the host has one (given to init).
-pub fn remote_channel() -> Option<alloc::sync::Arc<crate::channel::Channel>> {
-    if unsafe { host::remote_open() } == 0 {
+/// Remote channel `i`, if the host has it (given to init).
+pub fn remote_channel(i: u8) -> Option<alloc::sync::Arc<crate::channel::Channel>> {
+    if i > 1 || unsafe { host::remote_open(i as u32) } == 0 {
         return None;
     }
-    Some(REMOTE.lock().get_or_insert_with(crate::channel::Channel::remote).clone())
+    Some(REMOTE.lock()[i as usize].get_or_insert_with(|| crate::channel::Channel::remote(i)).clone())
 }
 
-pub fn remote_send(b: &[u8]) -> Result<(), Error> {
-    unsafe { host::remote_send(b.as_ptr(), b.len()) };
+pub fn remote_send(i: u8, b: &[u8]) -> Result<(), Error> {
+    unsafe { host::remote_send(i as u32, b.as_ptr(), b.len()) };
     Ok(())
 }
 
@@ -341,10 +344,10 @@ extern "C" fn kernel_remote_buf() -> *mut u8 {
     (&raw mut REMOTE_BUF) as *mut u8
 }
 
-/// A message from the server is in the remote buffer.
+/// A message from the server for remote channel `i` is in the remote buffer.
 #[unsafe(no_mangle)]
-extern "C" fn kernel_remote(len: usize) {
-    let r = REMOTE.lock().clone();
+extern "C" fn kernel_remote(i: usize, len: usize) {
+    let r = REMOTE.lock().get(i).cloned().flatten();
     if let Some(r) = r {
         let b = unsafe { core::slice::from_raw_parts((&raw const REMOTE_BUF) as *const u8, len.min(65536)) };
         r.deliver(b.to_vec());

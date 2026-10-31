@@ -25,7 +25,8 @@
 //!
 //! A Function (doc/serverless.md): `kind = "Function"`, `name`, `image`,
 //! `args`, `uses`, `timeout` (s, 10), `max` (instances per node, 4),
-//! `idle` (s, 30), `reuse` (true), `[resources]`.
+//! `idle` (s, 30), `reuse` (true), `expose` (false: requests from outside,
+//! doc/ingress.md), `[resources]`.
 //!
 //! `uses` entries: a service `NAME` (`svc:NAME`), a Function `fn:NAME`, a
 //! KV namespace `kv:NAME`, or `http` (curl's capability).
@@ -64,6 +65,7 @@ struct Raw {
     max: Option<u32>,
     idle: Option<u64>,
     reuse: Option<bool>,
+    expose: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -109,6 +111,8 @@ pub struct FnSpec {
     pub max: u32,
     pub idle: u64,
     pub reuse: bool,
+    /// Requests from outside reach it (doc/ingress.md).
+    pub expose: bool,
 }
 
 pub enum Object {
@@ -204,6 +208,7 @@ pub fn parse(text: &str) -> Result<Object, String> {
                 max: r.max.unwrap_or(4).clamp(1, 16),
                 idle: r.idle.unwrap_or(30).clamp(1, 3600),
                 reuse: r.reuse.unwrap_or(true),
+                expose: r.expose.unwrap_or(false),
             };
             Ok(Object::Function { name: r.name, spec })
         }

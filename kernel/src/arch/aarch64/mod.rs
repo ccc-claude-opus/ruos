@@ -164,11 +164,11 @@ pub fn memory_total() -> u64 {
 }
 
 /// No host to talk to (until the network, M7).
-pub fn remote_send(_b: &[u8]) -> Result<(), abi::Error> {
+pub fn remote_send(_i: u8, _b: &[u8]) -> Result<(), abi::Error> {
     Err(abi::Error::NotSupported)
 }
 
-pub fn remote_channel() -> Option<alloc::sync::Arc<crate::channel::Channel>> {
+pub fn remote_channel(_i: u8) -> Option<alloc::sync::Arc<crate::channel::Channel>> {
     None
 }
 

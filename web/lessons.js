@@ -227,6 +227,22 @@ export const LESSONS = [
       { cmd: 'kube delete hello; kube delete count; kube delete cgi', note: '收拾' },
     ],
   },
+  {
+    title: '16. 從外面呼叫函式（對外入口）',
+    text: [
+      '`expose = true` 的函式有一個網址，在 ruos serve 的「函式埠」（預設是主埠加 10，例如 8790）。外面的請求先到 ruos serve，它挑一台機器（已經有這個函式 instance 的優先）把請求送進去，kube 交給 instance，回答再沿原路回去。沒有 expose 的函式，外面連不到。',
+      '函式埠和這一頁是不同的 origin：函式回的網頁就是一個普通網站，但碰不到 OS 自己的連線。OS 跑在瀏覽器分頁裡，所以把所有分頁都關掉之後，網址會回 503：沒有機器可以處理請求。',
+    ],
+    steps: [
+      { cmd: 'cat kube/fn-site.toml', note: 'expose = true，加上 kv:visits' },
+      { cmd: 'kube apply kube/fn-site.toml', note: '套用' },
+      { cmd: 'kube get fn | grep site', note: 'URL 欄：在新分頁打開它（或到「叢集」頁點連結）' },
+      { cmd: 'kube describe site', note: '從外面來的請求一樣會冷啟動、重用、閒置縮到 0' },
+      { cmd: 'kv get visits count', note: '網頁上按「來訪 +1」的次數' },
+      { cmd: 'fn call site 從 OS 裡面呼叫', note: '裡面照樣能用 fn call' },
+      { cmd: 'kube delete site', note: '收拾：網址變成 404' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {
