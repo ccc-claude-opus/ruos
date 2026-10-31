@@ -23,6 +23,7 @@ use alloc::vec::Vec;
 use libsys::console::{Console, MAX_LINE};
 use libsys::dock::Dock;
 use libsys::fs::Fs;
+use libsys::http::Http;
 use libsys::kube::Kube;
 use libsys::ns;
 use libsys::store::Store;
@@ -38,6 +39,7 @@ pub struct Sh {
     pub store: Store,
     pub dock: Option<Dock>,
     pub kube: Option<Kube>,
+    pub http: Option<Http>,
     pub fs: Option<Fs>,
     /// Keeps the overlay alive.
     _ctl: Option<Channel>,
@@ -129,6 +131,7 @@ fn main(_arg: usize) -> i64 {
         store,
         dock: ns::get("dock").map(|d| Dock(Channel(d))),
         kube: ns::get("kube").map(|k| Kube(Channel(k))),
+        http: Http::get(),
         fs,
         _ctl: ctl,
         cwd: String::from("/home"),

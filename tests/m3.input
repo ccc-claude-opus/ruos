@@ -132,4 +132,15 @@ kube delete front
 kube delete echo
 kube delete config greeting
 kube get svc
+curl http://127.0.0.1:@HTTP_PORT@/hello
+curl -i http://127.0.0.1:@HTTP_PORT@/hello | head -n 1
+curl -d "x=1" http://127.0.0.1:@HTTP_PORT@/echo
+curl http://127.0.0.1:@HTTP_PORT@/big | wc -l
+curl -o /tmp/big.txt http://127.0.0.1:@HTTP_PORT@/big
+tail -n 1 /tmp/big.txt
+curl -f http://127.0.0.1:@HTTP_PORT@/missing || echo "curl -f gave $?"
+curl http://127.0.0.1:@HTTP_PORT@/redirect
+curl http://localhost:1/
+curl file:///etc/motd
+run hello console http
 exit

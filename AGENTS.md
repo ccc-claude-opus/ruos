@@ -39,7 +39,7 @@ node web/test/boot.mjs           # WASM 開機測試（需先 ./run.sh build was
 ## 測試
 
 `test.sh` 先建置全部平台，再為 QEMU 啟動一個共用的 ruos serve（`build/podsrv.log`），然後每個平台在新磁碟上開機兩次：第一次打 `tests/m3.input`，比對所有 `tests/mN.expect`、`tests/teach.expect` 與 `tests/shell.expect`（ERE，每行一個，三平台共用）加 `tests/mN.<平台>.expect`，並確認沒有 `panic:` 或 `FAILED`；第二次打 `tests/boot2.input`，比對 `tests/boot2.expect`（第一次 commit 的映像與物件要從磁碟回來）。每次開機後檢查 server（`post_checks`：可寫層、`podimg verify snap`），結果加進 log。
-WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、系統圖的 snapshot（shell 的 channel 連到 console、dock、kube、store 與自己檔案系統的 overlay（資料與 control 兩條）），第一次開機時還故意在第 50 個回覆後斷一次 server 連線（`--drop-remote`，要看到 `remote: reconnected`）。shell 印出 `shell: ready` 後，QEMU 平台經 FIFO 從序列埠送入 `tests/m3.input`（太早送會被 OpenSBI 重設 UART 吃掉），WASM 由 `web/test/boot.mjs` 在同一時機送進核心 Worker。
+WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、系統圖的 snapshot（shell 的 channel 連到 console、dock、kube、store（一般的與 http 兩條）與自己檔案系統的 overlay（資料與 control 兩條）），第一次開機時還故意在第 50 個回覆後斷一次 server 連線（`--drop-remote`，要看到 `remote: reconnected`）。shell 印出 `shell: ready` 後，QEMU 平台經 FIFO 從序列埠送入 `tests/m3.input`（太早送會被 OpenSBI 重設 UART 吃掉），WASM 由 `web/test/boot.mjs` 在同一時機送進核心 Worker。
 自測（`kernel/src/selftest.rs`）：第 10 個 tick 印 `timer: 10 ticks at 100 Hz`，第 30 個 tick 印 `M1 OK`；init 結束（印 `init exited (code)`）且 M1 自測做完才關機。M2–M4 的核心測試在 `apps/ktest`（init 開機時先跑，印 `M2 OK`、`M3 OK`、`M4 OK`；handle 0 = store），之後 init 啟動 console 與 shell，測試腳本打字驗證 shell。新里程碑照這個模式加 `tests/mN*.expect`。
 
 ## 設計（已與使用者確認）
@@ -69,6 +69,7 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   18. capability 版 Service、Config、probe、滾動更新 — **完成**
   19. 多節點叢集：ruos serve 的 KV（版本 + CAS + 租約）、leader、controller / scheduler、kubelet — **完成**
   20. 網頁的「叢集」分頁與第 11–13 課 — **完成**
+  21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
 - **2026-10-31 使用者決定：專注做 web 版的 OS**。測試只跑 wasm（`./test.sh wasm`），riscv64 / aarch64 不必每步都測（程式碼仍共用，先不刪）。
 
 ## kube（M17）
@@ -92,6 +93,12 @@ WASM 測試另外檢查 registry（ref、immutable blob、`podimg verify`）、�
   - `kube get nodes`（STATUS Ready / NotReady、ROLE leader）；`get pods` 多了 NODE 欄。init 在 shell 結束時先停 kube，再請 dock `shutdown`（停掉所有 pod：pod 拿著 console client，否則 console 不會結束、機器不會關）。
   - 測試：test.sh 的 wasm 在 boot 2 之後跑 `cluster_test`：另起一個 ruos serve，先開 `node-b`（`tests/cluster-b.input`：sleep 25 後 exit），它的 shell ready 後再開 `test`（`tests/cluster.input`），比對 `tests/cluster.expect`（不是 m 開頭，所以 boot 1 不比對它）：兩個節點、pod 分到兩邊、`node = "node-b"` 的 pod、node-b 離開後它的 pod 在 test 重建、留下的 pinned 變 Unschedulable、leader 交接。`web/test/boot.mjs --server URL` 用已經在跑的 server。範例 `spread.toml`、`pinned.toml`。
 - **M20（網頁）**：ruos serve 的 `GET /v1/cluster`（所有記錄的 JSON：`{now, records: {KEY: {version, updated, value}}}`，`cluster::json`）。`web/cluster.js` 的 `ClusterView`：「叢集」分頁顯示時每秒抓一次（內容沒變就不重畫）；節點卡片（Ready / NotReady、leader、「這一頁」= 頁面的 `?machine=`）裡列出分到它的 pod（顏色 = 狀態）、Unschedulable 的另一張卡；Deployment 表（就緒 / 想要、revision、更新中、映像、serves / uses）；最近的事件（所有 `events/*` 合併，新的在前）。`lessons.js` 第 11 課（宣告式、自我修復、擴縮、back-off、Space）、第 12 課（Service、Config、滾動更新、liveness）、第 13 課（叢集：另開 `?machine=b2` 分頁、排程、節點離開）。leader 會把 5 分鐘沒更新的 `nodes/N` 刪掉。`.claude/launch.json` 的 `ruos`（埠 8781）是預覽用的 ruos serve。
+- **M21（curl）**：
+  - ruos serve 的 `http.rs`：`fetch` 用 `ureq` 3（rustls），10 s、body 最多 4 MiB、最多 5 次轉址、只有 http / https。檢查在自訂的 `Resolver`（`ureq::unversioned::resolver`，包 `DefaultResolver`）裡：解析出的位址是 loopback、private、link-local、0/8、100.64/10、multicast、broadcast、IPv6 ULA / link-local（含 v4-mapped）就丟掉，除非在 `--http-allow ADDR:PORT` 裡；全被丟掉就回「HOST is on the server's own network (refused)」。所以轉址與 DNS 重新解析也擋得住。`--no-http` 整個關掉。
+  - remote 的 `HTTP_FETCH [method, url, headers, body]` → `STATUS LEN\n` + header 行（body 留在 session 的 `fetched`）、`HTTP_READ [offset]` → 最多 60000 bytes（channel 訊息上限 64 KB）。store 原樣轉送，但只接受「http capability」的 client：store 名稱空間的 `web`（init 建的 channel）來的 client，以及它們 `CONNECT` 出來的；其他 client 回 `no http capability`。init 把 `web` 的另一端給 shell 當 `http`。
+  - `libsys/src/http.rs`：`Http::get()`（名稱 `http`）、`connect()`、`fetch(method, url, headers, body)`（FETCH 之後分段 READ）。`Store::raw(op, fields)` → (狀態, 內容)（原本的 `kv`；kube 也用）。
+  - shell 的 `curl`（內建、可接管線）：`-i -I -s -f -L -X -H -d -o`；沒有 `://` 就補 `http://`；`-d` 預設 POST 與 form 的 Content-Type；二進位內容（前 1 KB 有 NUL）只報大小；`-f` 遇到 ≥ 400 狀態碼 22；連不到狀態 6。`run IMAGE http` 給新的 http client。
+  - 測試：`web/test/boot.mjs` 自己起一個 Node http server（`/hello`、`/echo`、`/big`（20000 行，測分段）、`/redirect`（轉到 127.0.0.1:1，要被擋）、其他 404），以 `--http-allow 127.0.0.1:PORT` 開放它，輸入檔裡的 `@HTTP_PORT@` 換成它的埠；`tests/m21.expect`。QEMU 的 run_qemu 沒有換 `@HTTP_PORT@`（沒測原生平台）。第 14 課。
 - `apps/worker`：`worker` 一直跑（每 10 s 報一次），`worker SECONDS [CODE]` 時間到就以 CODE 結束。root 映像的 `/home/kube/`：`web.toml`、`flaky.toml`（on-failure）、`small.toml`（Space）、`crowd.toml`（超過 Space 的 task 數 → Pending）。測試：`tests/m3.input` 最後一段、`tests/m17.expect`。
 
 ## 發布：`cargo install ruos`（M16）

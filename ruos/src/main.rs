@@ -18,6 +18,9 @@
 //!   WebSocket /v1/remote?machine=NAME&session=ID   the remote channel (remote.rs)
 //!   GET /v1/pods            `SESSION/KEY` lines: the writable layers kept here
 //!   GET /v1/pods/SESSION/KEY/files/PATH
+//! Machines' HTTP requests (curl) are made here (http.rs): not to this
+//! side's own network, unless `--http-allow ADDR:PORT`; `--no-http` turns
+//! them off.
 //!   GET /v1/cluster         the cluster's records (kube), JSON:
 //!                           {"now": MS, "records": {KEY: {"version", "updated", "value"}}}
 //!
@@ -37,6 +40,7 @@ use tungstenite::{Message, WebSocket};
 
 mod assets;
 mod cluster;
+mod http;
 mod id;
 mod remote;
 
@@ -53,7 +57,8 @@ struct Config {
 const USAGE: &str = "usage:
   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
   ruos riscv64 | aarch64 [--smp N]     the OS in QEMU (qemu-system-riscv64 / -aarch64 needed)
-  ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]";
+  ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
+             [--no-http] [--http-allow ADDR:PORT]...";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -66,6 +71,7 @@ fn main() {
     let mut bind = "127.0.0.1".to_string();
     let mut cfg = Config { web: None, kernel: None, store: None };
     let (mut open, mut smp) = (true, 4u32);
+    let mut http = http::Settings { enabled: true, allow: Vec::new() };
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| usage(&format!("{a} needs a value")));
@@ -74,6 +80,8 @@ fn main() {
             "--bind" if cmd == "serve" => bind = val(),
             "--web" if cmd == "serve" => cfg.web = Some(PathBuf::from(val())),
             "--kernel" if cmd == "serve" => cfg.kernel = Some(PathBuf::from(val())),
+            "--no-http" => http.enabled = false,
+            "--http-allow" => http.allow.push(val().parse().unwrap_or_else(|_| usage("bad --http-allow (ADDR:PORT)"))),
             "--store" if cmd == "serve" => cfg.store = Some(PathBuf::from(val())),
             "--no-open" if cmd == "web" => open = false,
             "--smp" if cmd != "serve" && cmd != "web" => smp = val().parse().unwrap_or_else(|_| usage("bad --smp")),
@@ -81,6 +89,7 @@ fn main() {
             _ => usage(&format!("unknown argument {a}")),
         }
     }
+    http::configure(http);
     if cmd == "serve" {
         if cfg.web.is_none() && !assets::present() {
             cfg.web = Some(PathBuf::from("web"));
@@ -292,6 +301,7 @@ fn remote_channel(req: Request, cfg: &Config, query: &str) {
             None => format!("s{}-{}", std::process::id(), SESSIONS.fetch_add(1, Ordering::Relaxed)),
         },
         machine,
+        fetched: Default::default(),
     };
     loop {
         match ws.read() {

@@ -39,7 +39,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十三課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十四課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -54,6 +54,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 1. **宣告想要的狀態（kube）**：`kube apply`、殺掉 pod 看它回來、`kube scale`、back-off、Space
 1. **Service 與 Config**：`kube call echo hi`、只有 `uses` 的 pod 連得到、改 Config 觸發滾動更新、`kube rollout undo`、liveness
 1. **叢集**：另開一頁 `?machine=b2` 多一個節點、`kube get nodes`、pod 分到哪台、關掉那頁看 pod 搬家
+1. **上網**：`curl https://example.com | head`、`curl -o`、server 拒絕連內網、`http` 這個 capability
 
 「叢集」頁畫出 server 上 kube 的記錄：每個節點（機器）一張卡片，列出分到它的 pod 與狀態，下面是 Deployment 與最近的事件。
 
@@ -168,6 +169,14 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 | `ps` | `ps` | 列出 pod（同 `dock ps`） |
 | `kill` | `kill POD...` | 停止 pod（同 `dock stop`） |
 | 其他名稱 | `hello`、`/bin/snoop` | 執行 `/bin` 裡（或路徑指定）的程式，只給它一個主控台和引數 |
+
+### 網路（`curl`）
+
+| 指令 | 用法 | 說明 |
+|---|---|---|
+| `curl` | `curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL` | HTTP / HTTPS 請求；輸出可以接管線，`-o` 存成檔案，`-f` 遇到 4xx/5xx 就失敗（`$?` = 22） |
+
+瀏覽器裡的網頁不能直接連別的網站，所以請求由 server（`ruos serve`）代為發出、會自動跟著轉址，最多 10 秒、4 MiB。server 不會連到它自己那邊的網路（loopback、10.*、172.16–31.*、192.168.*、169.254.*、100.64.*、IPv6 的 ULA / link-local），轉址或 DNS 指過去也一樣；要開放某個位址用 `ruos serve --http-allow ADDR:PORT`，整個關掉用 `--no-http`。在系統裡，只有拿到 `http` 這個 capability 的程式能上網：shell 有，`run IMAGE http` 才會交給別的程式。
 
 ### 能力（capability）
 

@@ -46,6 +46,8 @@ kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
   kube apply FILE...   kube get [pods|deploy|nodes|svc|configs|spaces]   kube describe NAME
   kube scale NAME N    kube delete [config] NAME   kube logs POD
   kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
+網路（由 server 代為連線；要有 http 這個 capability）
+  curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL
 ";
 
 /// Flags (`-x`, `-n N`) and the other arguments.
@@ -550,6 +552,7 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
             Ok(Vec::new())
         }
         "kube" => sh.kube(&argv[1..]),
+        "curl" => curl(sh, &argv[1..]),
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -645,6 +648,7 @@ fn run_image(sh: &Sh, argv: &[String]) {
             }),
             "store" => sh.store.connect().ok().map(|s| s.0.0),
             "fs" => sh.fs.and_then(|fs| fs.connect().ok()).map(|f| f.0.0),
+            "http" => sh.http.and_then(|h| h.connect().ok()).map(|h| h.0.0),
             n => ns::get(n).and_then(|h| h.dup(Rights::ALL).ok()),
         };
         match h {
@@ -763,6 +767,87 @@ impl Sh {
     }
 }
 
+/// curl: the server makes the request (libsys::http).
+fn curl(sh: &mut Sh, argv: &[String]) -> Out {
+    let usage = "curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL";
+    let (mut include, mut head, mut silent, mut fail) = (false, false, false, false);
+    let (mut method, mut headers, mut data, mut out, mut url) = (None, String::new(), None, None, None);
+    let mut i = 0;
+    while i < argv.len() {
+        let val = |i: usize| argv.get(i + 1).cloned().ok_or_else(|| format!("{} needs a value\n{usage}", argv[i]));
+        match argv[i].as_str() {
+            "-i" | "--include" => include = true,
+            "-I" | "--head" => head = true,
+            "-s" | "--silent" => silent = true,
+            "-f" | "--fail" => fail = true,
+            "-L" | "--location" => {} // redirects are always followed
+            "-X" | "--request" => {
+                method = Some(val(i)?.to_uppercase());
+                i += 1;
+            }
+            "-H" | "--header" => {
+                headers += &val(i)?;
+                headers.push('\n');
+                i += 1;
+            }
+            "-d" | "--data" => {
+                data = Some(val(i)?);
+                i += 1;
+            }
+            "-o" | "--output" => {
+                out = Some(val(i)?);
+                i += 1;
+            }
+            a if a.starts_with('-') => return Err(format!("unknown option {a}\n{usage}")),
+            a => url = Some(String::from(a)),
+        }
+        i += 1;
+    }
+    let url = url.ok_or(usage)?;
+    let url = if url.contains("://") { url } else { format!("http://{url}") };
+    let http = sh.http.ok_or("this shell has no http capability")?;
+    let method = method.unwrap_or_else(|| String::from(if head { "HEAD" } else if data.is_some() { "POST" } else { "GET" }));
+    if data.is_some() && !headers.to_ascii_lowercase().contains("content-type:") {
+        headers += "Content-Type: application/x-www-form-urlencoded\n";
+    }
+    let body = data.unwrap_or_default();
+    let r = http.fetch(&method, &url, &headers, body.as_bytes()).map_err(err("request"))?;
+    let r = match r {
+        Ok(r) => r,
+        Err(why) => {
+            sh.status = 6;
+            return if silent { Ok(Vec::new()) } else { Err(why) };
+        }
+    };
+    if fail && r.status >= 400 {
+        sh.status = 22;
+        return if silent { Ok(Vec::new()) } else { Err(format!("the server answered {}", r.status)) };
+    }
+    let mut o = Vec::new();
+    if include || head {
+        o.extend_from_slice(format!("HTTP {}\n{}\n", r.status, r.headers).as_bytes());
+    }
+    if head {
+        return Ok(o);
+    }
+    if let Some(f) = out {
+        sh.fs()?.write(&sh.path(&f), &r.body).map_err(err(&f))?;
+        if !silent {
+            o.extend_from_slice(format!("saved {} bytes to {f} ({})\n", r.body.len(), r.status).as_bytes());
+        }
+        return Ok(o);
+    }
+    if r.body.iter().take(1024).any(|&c| c == 0) {
+        o.extend_from_slice(format!("({} bytes of binary; use -o FILE)\n", r.body.len()).as_bytes());
+    } else {
+        o.extend_from_slice(&r.body);
+        if !r.body.is_empty() && !r.body.ends_with(b"\n") {
+            o.push(b'\n');
+        }
+    }
+    Ok(o)
+}
+
 pub fn dock_cmd(con: &Console, d: Dock, cmd: &str) {
     let r = match d.request(cmd) {
         Ok(r) => r,
@@ -822,7 +907,7 @@ const BUILTINS: &[&str] = &[
     "help", "echo", "pwd", "cd", "ls", "cat", "tree", "stat", "mkdir", "rmdir", "rm", "cp", "mv", "touch", "save", "head", "tail", "wc",
     "grep", "sort", "uniq", "cut", "tr", "sed", "seq", "tee", "basename", "dirname", "printf", "env", "set", "export", "unset", "read",
     "find", "rev", "tac", "nl", "which", "type", "sh", ".", "source", "test", "[", "true", "false", "date", "uptime", "clear", "history",
-    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube",
+    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl",
 ];
 
 /// test / [ : -e -f -d -s -z -n, = !=, -eq -ne -lt -le -gt -ge, !.

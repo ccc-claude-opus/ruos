@@ -10,11 +10,14 @@
 //!   index id, then every object in parts);
 //! - DISK_INFO / DISK_READ / DISK_WRITE: the machine's disk (wasm32 has no
 //!   block device), `STORE/disks/MACHINE.img`, 16 MiB;
-//! - KV_HELLO / KV_LIST / KV_PUT / KV_DEL: the cluster's records (cluster.rs).
+//! - KV_HELLO / KV_LIST / KV_PUT / KV_DEL: the cluster's records (cluster.rs);
+//! - HTTP_FETCH / HTTP_READ: an HTTP request made here (http.rs, for curl),
+//!   its body kept for the session and read in parts.
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::cluster::{self, Put};
+use crate::http;
 use crate::id::Id;
 
 const OK: u8 = 0;
@@ -39,6 +42,9 @@ const KV_HELLO: u8 = 40;
 const KV_LIST: u8 = 41;
 const KV_PUT: u8 = 42;
 const KV_DEL: u8 = 43;
+const HTTP_FETCH: u8 = 44;
+const HTTP_READ: u8 = 45;
+const PART: usize = 60000;
 const SECTOR: u64 = 512;
 const DISK_SIZE: u64 = 16 << 20;
 
@@ -84,6 +90,8 @@ pub struct Session {
     pub id: String,
     /// Names the disk image (`?machine=NAME` on the WebSocket URL).
     pub machine: String,
+    /// The body of the session's last HTTP_FETCH.
+    pub fetched: std::sync::Mutex<Vec<u8>>,
 }
 
 impl Session {
@@ -384,6 +392,23 @@ impl Session {
                     }
                     _ => Ok(reply(FAILED, b"bad key")),
                 }
+            }
+            HTTP_FETCH => match decode(msg, 4) {
+                Some((_, f)) => Ok(match http::fetch(text(f[0]), text(f[1]), text(f[2]), f[3]) {
+                    Ok(a) => {
+                        let head = format!("{} {}\n{}", a.status, a.body.len(), a.headers);
+                        *self.fetched.lock().unwrap_or_else(|e| e.into_inner()) = a.body;
+                        reply(OK, head.as_bytes())
+                    }
+                    Err(m) => reply(FAILED, m.as_bytes()),
+                }),
+                None => Ok(reply(FAILED, b"bad request")),
+            },
+            HTTP_READ => {
+                let off = decode(msg, 1).map(|(_, f)| num(f[0]) as usize).unwrap_or(0);
+                let body = self.fetched.lock().unwrap_or_else(|e| e.into_inner());
+                let part = body.get(off..).map(|b| &b[..b.len().min(PART)]).unwrap_or(&[]);
+                Ok(reply(OK, part))
             }
             _ => Ok(reply(FAILED, b"unknown request")),
         };

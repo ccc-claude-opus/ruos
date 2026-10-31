@@ -1,2 +1,2 @@
 ^ktest: memory map not supported on wasm32$
-^snapshot: [0-9]+ tasks, [0-9]+ quotas; the shell talks to console, dock, kube, overlay, overlay, store$
+^snapshot: [0-9]+ tasks, [0-9]+ quotas; the shell talks to console, dock, kube, overlay, overlay, store, store$

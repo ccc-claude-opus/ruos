@@ -188,6 +188,23 @@ export const LESSONS = [
       { cmd: 'kube delete spread; kube delete pinned', note: '收拾' },
     ],
   },
+  {
+    title: '14. 上網：curl 與 http 這個能力',
+    text: [
+      '瀏覽器裡的網頁不能隨便連到別的網站，所以由 server 代為連線：`curl` 把請求經 store 交給 server，server 連過去，再把回答傳回來。為了不讓網頁上的人透過它碰到 server 那邊的內網，server 不連 localhost、10.*、192.168.*、169.254.* 這類位址（轉址過去也不行）。',
+      '能上網的也只有拿到 `http` 這個 capability 的程式：shell 有，`run` 啟動的程式要你明說才給。',
+    ],
+    steps: [
+      { cmd: 'curl https://example.com | head -n 5', note: '抓一個網頁，接管線' },
+      { cmd: 'curl -I https://example.com', note: '只看回應的 headers' },
+      { cmd: 'curl -o /tmp/page.html https://example.com', note: '存成檔案' },
+      { cmd: 'grep -i title /tmp/page.html', note: '在檔案裡找' },
+      { cmd: 'curl http://localhost:8780/', note: 'server 自己那台機器：拒絕' },
+      { cmd: 'curl http://169.254.169.254/', note: '雲端主機的 metadata 位址：也拒絕' },
+      { cmd: 'handles', note: 'shell 手上那條 http channel' },
+      { cmd: 'run hello console http', note: '把 http 交給一個程式；不給就沒有' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

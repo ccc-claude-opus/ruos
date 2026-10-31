@@ -375,6 +375,8 @@ impl Store<'_> {
             }
             // The cluster's records (kube) are on the server.
             KV_HELLO | KV_LIST | KV_PUT | KV_DEL => self.remote_call(msg),
+            // Only from clients with the http capability (checked in main).
+            HTTP_FETCH | HTTP_READ => self.remote_call(msg),
             UP_READ_AT => {
                 let a = f(4);
                 let (off, len) = (num(&a[2]), num(&a[3]).min(MAX_INLINE));
@@ -523,26 +525,35 @@ fn main(_arg: usize) -> i64 {
         }
     }
     let Ok(port) = Port::create() else { return 4 };
-    let mut clients: Vec<Option<Channel>> = Vec::new();
-    let add = |clients: &mut Vec<Option<Channel>>, c: Channel| {
-        clients.push(Some(c));
+    // (channel, may it make HTTP requests): clients that came from `web`
+    // (and the clients they CONNECT) have the http capability.
+    let mut clients: Vec<Option<(Channel, bool)>> = Vec::new();
+    let add = |clients: &mut Vec<Option<(Channel, bool)>>, c: Channel, web: bool| {
+        clients.push(Some((c, web)));
         let _ = port.bind(c.0, signal::READABLE | signal::PEER_CLOSED, clients.len() as u64 - 1);
     };
     if let Some(c) = ns::get("client") {
-        add(&mut clients, Channel(c));
+        add(&mut clients, Channel(c), false);
+    }
+    if let Some(c) = ns::get("web") {
+        add(&mut clients, Channel(c), true);
     }
     let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
     loop {
         let Ok(p) = port.wait(u64::MAX) else { return 5 };
         let i = p.key as usize;
-        let Some(c) = clients[i] else { continue };
+        let Some((c, web)) = clients[i] else { continue };
         let mut hs = [Handle(0); 1];
         let mut alive = true;
         loop {
             match c.read(&mut buf, &mut hs) {
                 Ok((n, nh)) => {
                     if buf[0] == CONNECT && nh == 1 {
-                        add(&mut clients, Channel(hs[0]));
+                        add(&mut clients, Channel(hs[0]), web);
+                        continue;
+                    }
+                    if matches!(buf[0], HTTP_FETCH | HTTP_READ) && !web {
+                        let _ = c.write(&reply(FAILED, b"no http capability"), &[]);
                         continue;
                     }
                     let msg = buf[..n].to_vec();

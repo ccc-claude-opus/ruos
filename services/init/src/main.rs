@@ -1,7 +1,8 @@
 //! init: the first task. Handle 0 is the serial port, 1 the boot pack, 2
 //! the root quota; then Mmio + Irq pairs of virtio devices (native) or the
 //! channel to podsrv (wasm32 with a server). Starts the store service from the pack, runs the
-//! kernel tests, then console, dock, kube and a shell; ends with the shell.
+//! kernel tests, then console, dock, kube and a shell (with `http`, the
+//! store's web client); ends with the shell.
 #![no_std]
 #![no_main]
 
@@ -28,8 +29,9 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
 }
 
 /// The drivers and the store service, started straight from the pack.
-/// The store, and a client of the net service for the shell (if there is one).
-fn start_store(pack_mem: Memory) -> Option<(Store, Option<Net>)> {
+/// The store, its `web` client (the http capability, for the shell) and a
+/// client of the net service for the shell (if there is one).
+fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>)> {
     let size = pack_mem.size().ok()?;
     let mut bytes = alloc::vec![0u8; size as usize];
     pack_mem.read(0, &mut bytes).ok()?;
@@ -68,7 +70,8 @@ fn start_store(pack_mem: Memory) -> Option<(Store, Option<Net>)> {
             _ => {}
         }
     }
-    from_pack(&pack, "store", ns.add("pack", pack_mem.0)).map(|c| (Store(c), net))
+    let (web, web_srv) = Channel::create().ok()?;
+    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, net))
 }
 
 /// A new client channel of the console.
@@ -79,7 +82,7 @@ fn console_client(con: &Console) -> Option<Handle> {
 }
 
 fn main(_arg: usize) -> i64 {
-    let Some((store, net)) = start_store(Memory(Handle(1))) else {
+    let Some((store, web, net)) = start_store(Memory(Handle(1))) else {
         println!("init: cannot start the store");
         return 1;
     };
@@ -119,7 +122,7 @@ fn main(_arg: usize) -> i64 {
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
-    let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0);
+    let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0).add("http", web.0);
     let ns = match net {
         Some(n) => ns.add("net", n.0.0),
         None => ns,

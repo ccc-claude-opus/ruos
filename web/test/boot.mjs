@@ -6,8 +6,10 @@
 // the machine's disk on the server (and its node in the cluster); N: the
 // server connection is closed once after N answers (the kernel host
 // reconnects); URL: a server that is already running (machines that share
-// it are one cluster), else one is started here. RUOS (the server binary), KERNEL_WASM override the paths.
+// it are one cluster), else one is started here, with a small web server
+// for curl that it may reach (--http-allow); `@HTTP_PORT@` in FILE is its port. RUOS (the server binary), KERNEL_WASM override the paths.
 import { spawn, execFileSync } from 'node:child_process';
+import http from 'node:http';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -31,12 +33,33 @@ const serverUrl = arg('--server', null);
 const fail = (msg) => {
   console.error(`boot.mjs: ${msg}`);
   srv?.kill();
+  web.close();
   process.exit(1);
 };
 
+// What curl in the machine fetches.
+const web = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (d) => (body += d));
+  req.on('end', () => {
+    const send = (status, text, headers = {}) => {
+      res.writeHead(status, { 'Content-Type': 'text/plain', ...headers });
+      res.end(text);
+    };
+    if (req.url === '/hello') send(200, 'hello from the test web server\n');
+    else if (req.url === '/echo') send(200, `got ${req.method} ${body}\n`);
+    else if (req.url === '/big') send(200, Array.from({ length: 20000 }, (_, i) => `line ${i + 1}\n`).join(''));
+    // A redirect to the server's own machine: refused like a direct request.
+    else if (req.url === '/redirect') send(302, '', { Location: 'http://127.0.0.1:1/' });
+    else send(404, 'not here\n');
+  });
+});
+const webPort = serverUrl ? 0 : await new Promise((resolve) => web.listen(0, '127.0.0.1', () => resolve(web.address().port)));
+if (serverUrl) web.close();
 const srv = serverUrl
   ? null
-  : spawn(server, ['serve', '--port', '0', '--web', path.join(root, 'web'), '--kernel', kernel, '--store', store], {
+  : spawn(server, ['serve', '--port', '0', '--web', path.join(root, 'web'), '--kernel', kernel, '--store', store,
+      '--http-allow', `127.0.0.1:${webPort}`], {
       stdio: ['ignore', 'pipe', 'inherit'],
     });
 const base = serverUrl ?? await new Promise((resolve, reject) => {
@@ -88,7 +111,8 @@ worker.on('message', (m) => {
     if (!typed && /^shell: ready/m.test(out)) {
       typed = true;
       worker.postMessage({ type: 'snapshot' });
-      worker.postMessage({ type: 'key', bytes: [...fs.readFileSync(input)] });
+      const script = fs.readFileSync(input, 'utf8').replaceAll('@HTTP_PORT@', String(webPort));
+      worker.postMessage({ type: 'key', bytes: [...Buffer.from(script)] });
     }
   } else if (m.type === 'snapshot') {
     // The page's system view: the shell's channels lead to console, store and dock.
@@ -106,6 +130,7 @@ worker.on('message', (m) => {
     afterBoot().then(
       () => {
         srv?.kill();
+        web.close();
         process.exitCode = m.code;
       },
       (e) => fail(e.message),

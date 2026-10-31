@@ -1,0 +1,12 @@
+^hello from the test web server$
+^HTTP 200$
+^got POST x=1$
+^20000$
+^saved 208894 bytes to /tmp/big\.txt \(200\)$
+^line 20000$
+^curl: the server answered 404$
+^curl -f gave 22$
+^curl: 127\.0\.0\.1 is on the server's own network \(refused\)$
+^curl: localhost is on the server's own network \(refused\)$
+^curl: only http:// and https:// URLs$
+^hello: hi from a pod \([a-z0-9]+\); names: console, http$

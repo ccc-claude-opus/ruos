@@ -15,3 +15,4 @@ include = ["src/**", "build.rs", "assets/**", "Cargo.toml", "README.md", "LICENS
 blake3 = "1.8"
 tiny_http = "0.12"
 tungstenite = "0.30"
+ureq = "3"

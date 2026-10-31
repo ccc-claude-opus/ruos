@@ -22,6 +22,7 @@ pub mod console;
 pub mod dock;
 pub mod fmt;
 pub mod fs;
+pub mod http;
 pub mod image;
 mod heap;
 pub mod ipc;

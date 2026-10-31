@@ -72,7 +72,7 @@ pub struct Api {
 impl Api {
     pub fn new(store: Store) -> Api {
         let mut api = Api { store, local: None, node: String::new(), session: String::new(), recs: BTreeMap::new(), server_ms: 0, at: 0 };
-        match api.store.kv(KV_HELLO, &[]) {
+        match api.store.raw(KV_HELLO, &[]) {
             Ok((OK, b)) => {
                 let s = String::from_utf8_lossy(&b).into_owned();
                 let w: Vec<&str> = s.split(' ').collect();
@@ -108,7 +108,7 @@ impl Api {
         if self.local.is_some() {
             return true;
         }
-        let Ok((OK, b)) = self.store.kv(KV_LIST, &[b""]) else { return false };
+        let Ok((OK, b)) = self.store.raw(KV_LIST, &[b""]) else { return false };
         let mut recs = BTreeMap::new();
         let mut rest = &b[..];
         let line = |r: &mut &[u8]| {
@@ -162,7 +162,7 @@ impl Api {
             }
             None => {
                 let e = expect.map(|v| format!("{v}")).unwrap_or_default();
-                match self.store.kv(KV_PUT, &[key.as_bytes(), e.as_bytes(), value.as_bytes()]) {
+                match self.store.raw(KV_PUT, &[key.as_bytes(), e.as_bytes(), value.as_bytes()]) {
                     Ok((OK, b)) => String::from_utf8_lossy(&b).parse().unwrap_or(0),
                     Ok((_, b)) if b == b"conflict" => return Write::Conflict,
                     _ => return Write::Failed,
@@ -175,7 +175,7 @@ impl Api {
 
     pub fn delete(&mut self, key: &str) {
         if self.recs.remove(key).is_some() && self.local.is_none() {
-            let _ = self.store.kv(KV_DEL, &[key.as_bytes(), b""]);
+            let _ = self.store.raw(KV_DEL, &[key.as_bytes(), b""]);
         }
     }
 
