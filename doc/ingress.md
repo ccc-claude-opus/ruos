@@ -60,12 +60,8 @@ PATH 是 `/fn/NAME` 之後的部分（至少是 `/`）。回應如果不是以 `
 
 ## 實作時的改動
 
-- **ingress 用 HTTP long polling，不是 WebSocket。** ruos serve 的 WebSocket（tungstenite）一次只能由一個 thread 讀或寫，而 tiny_http 交出來的連線又不能設讀取逾時，所以 server 沒辦法在等機器送回答的同時，主動推請求給它。改成：
-  - 每台機器的 kernel host 一直掛著一個 `GET /v1/ingress/next?machine=M&session=S`。有這台機器的請求時，server 就回覆，每則是 `LEN\n` + 訊息；20 秒都沒有就回 204。kernel host 收到後立刻再掛一個。
-  - 回答以 `POST /v1/ingress/answer` 送回。
-  - 機器「在」的條件：正掛著 poll，或 3 秒內 poll 過。
-  - 回覆一個 poll 時如果寫不出去（分頁已關），那些請求放回佇列，交給下一個 poll。
-  - 在 OS 裡面，這仍然是核心的第二個 remote channel：kube 看到的和設計一樣，`REQ ID NAME\n` + 封包、`RESP ID\n` + 封包。
+- **ingress 先用 HTTP long polling，v2.0 改回 WebSocket。** v1 的 ruos serve 用同步的 tiny_http + tungstenite：一條 WebSocket 一次只能讀或寫，交出來的連線也不能設讀取逾時，所以 server 沒辦法一邊等機器回答、一邊主動推請求。M23 因此改成 long polling（`GET /v1/ingress/next` 掛著等請求，`POST /v1/ingress/answer` 送回答）。v2.0 第 2 步把 ruos serve 換成 tokio + axum 之後，一條 WebSocket 可以同時讀寫，就照原本的設計用 `/v1/ingress?machine=M&session=S` 這條 WebSocket：server 有請求就推過去，回答從同一條回來。機器「在」= 這條 WebSocket 開著；它關掉時，還沒回答的請求回 502。
+  - 在 OS 裡面，這一直都是核心的第二個 remote channel：kube 看到的和設計一樣，`REQ ID NAME\n` + 封包、`RESP ID\n` + 封包。
 - **server 也先檢查 `expose`**：server 讀叢集記錄 `fn/NAME`，沒有 `expose = true` 就直接回 404，不必送進機器。kube 收到請求時也會再檢查一次。
 - **WebSocket 與 ingress 只接受 OS 自己的頁面**：有 `Origin` header 的話必須是自己的 origin；有 `Sec-Fetch-Site` 的話必須是 `same-origin` 或 `none`。函式埠和 OS 頁面在瀏覽器眼中是 same-site，所以 `same-site` 會被拒絕。Node 測試兩個 header 都不帶，所以照樣允許。
 - **kube 從 `KV_HELLO` 知道函式埠的網址**：回覆的第四欄是 `http://ADDR:PORT`，用來顯示在 `kube get fn` 的 URL 欄。`/v1/cluster` 的 JSON 裡有 `fn_port`，網頁用它做連結。

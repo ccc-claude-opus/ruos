@@ -25,7 +25,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 
 - 核心：`fdt`（DTB；`dtb.rs` 只是包一層成核心用的小 API）、`talc` + `lock_api`（heap；鎖是會關中斷的 `RawIrqLock`）、`rand_chacha`（核心亂數）。
 - 使用者空間：`talc` + `spinning_top`（libsys heap；`Grow` source 在用完時 `memory.grow`）、`blake3`（`pure`）、`toml` + `serde`（Podfile 與 kube 的 manifest）。
-- 主機：`tiny_http` + `tungstenite`（ruos serve；v2.0 第 2 步改 tokio）、`ureq`（podimg 讀 registry；ruos serve 代為發 HTTP，rustls）。
+- 主機：`tokio` + `axum`（ruos serve 的 HTTP 與 WebSocket；`futures-util` 拆 WebSocket 的讀寫）、`ureq`（podimg 讀 registry；ruos serve 代為發 HTTP，rustls）。
 - 網頁不用框架：原生 ES module（`web/*.js`），SVG 自己畫。
 - 仍是自己寫的，因為沒有合用的套件：核心本身、物件庫的格式與 pack、各服務的協定（store、fs、dock、console、remote、kube）。
 
@@ -64,7 +64,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）；4. 前端 WASI preview1；5. 網站範例、課程、發布 2.0.0。
+- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）；4. 前端 WASI preview1；5. 網站範例、課程、發布 2.0.0。
 
 ## kube（M17）
 
@@ -103,8 +103,8 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   - shell：`fn call NAME [TEXT]`（等 60 s）、`fn ls`、`kv ls|get|put|rm NS …`（每次經 kube 的 `connect kv:NS` 拿一條）。kube：`get fn`、`describe F`、`delete F`。`apps/greet`（記憶體裡的計數 + 有 `kv:counter` 就加 KV 計數；`sleep N` 請求）。範例 `fn-hello.toml`（idle 15、max 2、timeout 3）、`fn-count.toml`、`fn-cgi.toml`（reuse false）。測試 `tests/m22.expect`。網頁：節點卡片列出函式 instance、函式表；第 15 課。
 - `kube delete space NAME`（沒有 Deployment 用時；各節點 dock 的 quota 留到重開機）。只在 wasm 檢查的 ingress 項目在 `tests/m23.wasm.expect`。
 - **M23（對外入口）**：設計與實作時的改動見 `doc/ingress.md`。
-  - ruos serve：`--fn-port N`（預設主埠 + 10；`--port 0` 時也是 0），印 `ruos: functions on http://ADDR:PORT/fn/`；`functions()` 另開一個 tiny_http（只有 `/fn/NAME/…` 與 `/` 列出公開的函式）。`ruos/src/ingress.rs`：機器（依 session）的佇列與 long poll（`next` 最多等 20 s；`put_back`）、`call`（讀 `fnstat/` 挑有熱 instance 的機器，否則輪流；等 timeout + 15 s，否則 504；沒有機器 503）、`answer`、`exposed`（讀 `fn/NAME` 的 `expose` / `timeout`）。`/v1/ingress/next`、`POST /v1/ingress/answer`。`own_origin` 擋 `/v1/remote` 與 `/v1/ingress` 的跨 origin（含 `Sec-Fetch-Site: same-site`）。函式的回應加 `X-Ruos-Node`；去掉 hop-by-hop header；body ≤ 60000。log：`ruos: fn NAME METHOD PATH → MACHINE: STATUS (N ms)`。
-  - 核心：remote channel 有編號（`Channel.remote: Option<u8>`，`arch::remote_channel(i)` / `remote_send(i, …)`，wasm imports `remote_open(i)` / `remote_send(i, p, len)`、export `kernel_remote(i, len)`）；init 拿到 handle 3（server 連線）與 4（ingress），init 把第一個 channel 給 store 當 `remote`、第二個給 kube 當 `ingress`。`kernel_host.js` 的 `ingressLink`（long poll + POST，和 remote 同一個 session）。
+  - ruos serve：`--fn-port N`（預設主埠 + 10；`--port 0` 時也是 0），印 `ruos: functions on http://ADDR:PORT/fn/`；`run()` 另開一個 axum Router（只有 `/fn/NAME/…` 與 `/` 列出公開的函式；body ≤ 60000，axum 的 `DefaultBodyLimit`）。`ruos/src/ingress.rs`：連著的機器（依 session，`attach` / `detach`）與等回答的請求（`oneshot`）、`call`（讀 `fnstat/` 挑有熱 instance 的機器，否則輪流；等 timeout + 15 s，否則 504；沒有機器 503；機器在回答前斷線 502）、`answer`、`exposed`（讀 `fn/NAME` 的 `expose` / `timeout`）。`/v1/ingress` 是 WebSocket（M23 時是 long polling，v2.0 換 tokio 後改回來）。`own_origin` 擋 `/v1/remote` 與 `/v1/ingress` 的跨 origin（含 `Sec-Fetch-Site: same-site`）。函式的回應加 `X-Ruos-Node`；去掉 hop-by-hop header；body ≤ 60000。log：`ruos: fn NAME METHOD PATH → MACHINE: STATUS (N ms)`。
+  - 核心：remote channel 有編號（`Channel.remote: Option<u8>`，`arch::remote_channel(i)` / `remote_send(i, …)`，wasm imports `remote_open(i)` / `remote_send(i, p, len)`、export `kernel_remote(i, len)`）；init 拿到 handle 3（server 連線）與 4（ingress），init 把第一個 channel 給 store 當 `remote`、第二個給 kube 當 `ingress`。`kernel_host.js` 的 `ingressLink`（WebSocket，和 remote 同一個 session，斷線就重連，不重送）。
   - kube：`ingress` 上的 `REQ ID NAME\n` + 封包 → 檢查 `expose` → 自己建 channel 寫入封包、交給 `fn_request`，回答（或 channel 關掉 = 504）以 `RESP ID\n` + 封包送回；不是 `HTTP ` 開頭的回答包成 `200 text/plain`。`kube get fn` 多 URL 欄（`Api.fn_base`，來自 `KV_HELLO` 第四欄）。
   - libsys `func::serve_http`、`Request`（`parse`、`header`、`param`；`fn call` 的純文字 = method `CALL`）、`Response`（`text`、`html`、`json`、`encode`）。`apps/site`（網頁 + `/api/hello`、`/api/hit`（kv:visits）、`/api/sleep`）、`fn-site.toml`。
   - 測試：boot.mjs 讀出函式埠，看到輸出 `ingress-test: go` 後自己送請求，印 `ingress: …`（`tests/m23.expect`）。網頁的函式表有連結；第 16 課。
@@ -152,7 +152,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - `services/overlay`（每個 pod 一個，dock 啟動，記在 dock 的 quota）：名稱空間 `store`、`fs`（pod 的請求）、`control`（dock：第一個訊息 `CONFIG key image`，之後 `COMMIT`）。合併檢視：upper（store 的 UP_*，key = `podN`）在上、映像各層在下（物件從 store 取，快取）；whiteout 遮住下層；`LIST` 合併各層。`COMMIT NAME`：upper → 新的 tree（刪除 = whiteout），疊到原映像每個架構的 manifest 上（資料與架構無關），新 index + ref。
 - `libsys/src/fs.rs`：`Fs`（`read/write/delete/list`，整個檔案讀寫，≤ 60 KB；`commit`）。pod 的名稱空間多了 `fs`。`apps/writer` 讀 `/etc/motd`、遞增 `/data/count`、刪 `/etc/motd`。dock `commit POD IMAGE`、`push IMAGE`；shell `dock commit` / `dock push`。
 - **remote channel**：核心的 `Channel::remote()` 端點，另一端是 host：寫入走 import `remote_send`（不能帶 handle），host 收到的訊息經 `kernel_remote_buf` / `kernel_remote` 進來。核心在 host 有 server 時（import `remote_open`）把它給 init 當 handle 3，init 轉給 store（`remote`）。`kernel_host.js` 以 WebSocket 連 `remoteUrl`（瀏覽器：頁面所在的 `/v1/remote`；Node 測試：ruos serve 的位址），連上前先排隊。
-- ruos serve：HTTP 是 `tiny_http`，WebSocket 是 `tungstenite`（`req.upgrade` 之後 `WebSocket::from_raw_socket`）；`remote.rs`（每條 WebSocket 一個 session `sPID-N`；OBJ_PUT 寫 `objects/`、REF_SET 寫 `refs/`、UP_* 存在 `STORE/pods/SESSION/KEY/files/` + `whiteouts`）；`GET /v1/pods`、`GET /v1/pods/SESSION/KEY/files/PATH`。Node 測試結束後檢查 server 上的可寫層（`data/count = 2`）並 `podimg verify` 推上去的 `snap`。
+- ruos serve：tokio + axum（`main.rs` 的 `run`：兩個 Router，OS 的與函式埠的；同步的檔案 I/O 在 `spawn_blocking` 裡）；`remote.rs`（同步的 `Session::handle`，每則 WebSocket 訊息一次）（每條 WebSocket 一個 session `sPID-N`；OBJ_PUT 寫 `objects/`、REF_SET 寫 `refs/`、UP_* 存在 `STORE/pods/SESSION/KEY/files/` + `whiteouts`）；`GET /v1/pods`、`GET /v1/pods/SESSION/KEY/files/PATH`。Node 測試結束後檢查 server 上的可寫層（`data/count = 2`）並 `podimg verify` 推上去的 `snap`。
 
 ## 磁碟（M7）
 

@@ -164,8 +164,8 @@ async function ingressTest() {
         resolve(res.statusCode);
       }).on('error', () => resolve('error'));
     });
-  say(`ingress from another origin ${await raw('/v1/ingress/next?machine=x&session=y', { Origin: 'http://evil.example' })}`);
-  say(`ingress from the function port ${await raw('/v1/ingress/next?machine=x&session=y', { 'Sec-Fetch-Site': 'same-site' })}`);
+  say(`ingress from another origin ${await raw('/v1/ingress?machine=x&session=y', { Origin: 'http://evil.example' })}`);
+  say(`ingress from the function port ${await raw('/v1/ingress?machine=x&session=y', { 'Sec-Fetch-Site': 'same-site' })}`);
   say(`websocket from another origin ${await raw('/v1/remote?machine=x', {
     Origin: 'http://evil.example', Connection: 'Upgrade', Upgrade: 'websocket',
     'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',

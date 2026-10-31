@@ -1,30 +1,21 @@
 //! Requests from outside for kube's Functions (doc/ingress.md). A request
 //! to the function port, `/fn/NAME/…`, goes to a machine as one message on
-//! its remote channel 1, `REQ ID NAME\n` + the request (an HTTP envelope),
-//! and comes back as `RESP ID\n` + the answer.
+//! its ingress WebSocket (`/v1/ingress?machine=M&session=S`, the kernel's
+//! remote channel 1), `REQ ID NAME\n` + the request (an HTTP envelope),
+//! and comes back on it as `RESP ID\n` + the answer. A machine is there
+//! while its ingress WebSocket is open.
 //!
-//! The server cannot send a machine anything on its own (the remote
-//! channel's WebSocket is the machine asking and the server answering), so
-//! each machine's kernel host keeps one long poll waiting,
-//! `GET /v1/ingress/next?machine=M&session=S` (answered when there are
-//! requests for it, or empty after 20 s), and posts each answer to
-//! `POST /v1/ingress/answer`. A machine is there while it polls.
-//!
-//! Which machine: among those there, one that already has an instance of
-//! the Function (the cluster's `fnstat/NODE` records) first, else the next
-//! in turn.
-use std::collections::{HashMap, VecDeque};
+//! Which machine: one that already has an instance of the Function (the
+//! cluster's `fnstat/NODE` records) first, else the next in turn.
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::mpsc;
-use std::sync::{Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use tokio::sync::{mpsc, oneshot};
 
 use crate::cluster;
 
-/// A poll waits this long for requests.
-const POLL_WAIT: Duration = Duration::from_secs(20);
-/// A machine that has not polled for this long is not there.
-const GONE_AFTER: Duration = Duration::from_secs(3);
 /// Time for a cold start, on top of the Function's timeout.
 const START_GRACE: u64 = 15;
 /// Requests and answers are one message on a channel.
@@ -32,68 +23,47 @@ pub const MAX_BODY: usize = 60000;
 
 struct Machine {
     name: String,
-    queue: VecDeque<Vec<u8>>,
-    last: Instant,
-    /// Polls waiting now.
-    polling: u32,
+    /// Which connection (a machine that connects again replaces the old one).
+    conn: u64,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 #[derive(Default)]
 struct State {
     /// By session.
     machines: HashMap<String, Machine>,
-    pending: HashMap<u64, mpsc::Sender<Vec<u8>>>,
+    /// Waiting for answers: (session, where the answer goes).
+    pending: HashMap<u64, (String, oneshot::Sender<Vec<u8>>)>,
     next: u64,
     turn: usize,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
-static WAKE: Condvar = Condvar::new();
 
-fn state() -> MutexGuard<'static, Option<State>> {
+fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_none() {
-        *g = Some(State::default());
-    }
-    g
+    f(g.get_or_insert_with(State::default))
 }
 
-/// A machine's poll: its requests (waits up to 20 s for some).
-pub fn next(session: &str, machine: &str) -> Vec<Vec<u8>> {
-    let mut g = state();
-    let s = g.as_mut().unwrap();
-    s.machines.retain(|_, m| m.polling > 0 || m.last.elapsed() < Duration::from_secs(60));
-    let m = s.machines.entry(session.to_string()).or_insert_with(|| Machine {
-        name: machine.to_string(),
-        queue: VecDeque::new(),
-        last: Instant::now(),
-        polling: 0,
+/// A machine's ingress WebSocket opened: (its connection id, the requests for it).
+pub fn attach(session: &str, machine: &str) -> (u64, mpsc::UnboundedReceiver<Vec<u8>>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let conn = with(|s| {
+        s.next += 1;
+        s.machines.insert(session.to_string(), Machine { name: machine.to_string(), conn: s.next, tx });
+        s.next
     });
-    m.polling += 1;
-    let until = Instant::now() + POLL_WAIT;
-    loop {
-        let s = g.as_mut().unwrap();
-        let m = s.machines.get_mut(session).unwrap();
-        if !m.queue.is_empty() || Instant::now() >= until {
-            m.polling -= 1;
-            m.last = Instant::now();
-            return m.queue.drain(..).collect();
-        }
-        let left = until.saturating_duration_since(Instant::now());
-        g = WAKE.wait_timeout(g, left).unwrap_or_else(|e| e.into_inner()).0;
-    }
+    (conn, rx)
 }
 
-/// Requests a poll could not deliver (its connection was gone): for the next poll.
-pub fn put_back(session: &str, msgs: Vec<Vec<u8>>) {
-    let mut g = state();
-    if let Some(m) = g.as_mut().unwrap().machines.get_mut(session) {
-        for b in msgs.into_iter().rev() {
-            m.queue.push_front(b);
+/// It closed: its requests that were not answered fail (502).
+pub fn detach(session: &str, conn: u64) {
+    with(|s| {
+        if s.machines.get(session).is_some_and(|m| m.conn == conn) {
+            s.machines.remove(session);
+            s.pending.retain(|_, (sess, _)| sess != session);
         }
-        // The page may be gone: let the others take new requests.
-        m.last = Instant::now() - GONE_AFTER;
-    }
+    });
 }
 
 /// An answer from a machine: `RESP ID\n` + the answer.
@@ -101,13 +71,14 @@ pub fn answer(body: &[u8]) -> bool {
     let Some(nl) = body.iter().position(|&c| c == b'\n') else { return false };
     let head = String::from_utf8_lossy(&body[..nl]).into_owned();
     let Some(id) = head.strip_prefix("RESP ").and_then(|i| i.trim().parse::<u64>().ok()) else { return false };
-    let tx = state().as_mut().unwrap().pending.remove(&id);
-    tx.is_some_and(|tx| tx.send(body[nl + 1..].to_vec()).is_ok())
+    let tx = with(|s| s.pending.remove(&id));
+    tx.is_some_and(|(_, tx)| tx.send(body[nl + 1..].to_vec()).is_ok())
 }
 
 /// A Function's record: Some(timeout in s) if it is exposed.
 pub fn exposed(store: &Path, name: &str) -> Option<u64> {
-    let text = cluster::with(store, |kv| kv.list(&format!("fn/{name}")).find(|(k, _)| **k == format!("fn/{name}")).map(|(_, r)| r.value.clone()))?;
+    let key = format!("fn/{name}");
+    let text = cluster::with(store, |kv| kv.list(&key).find(|(k, _)| **k == key).map(|(_, r)| r.value.clone()))?;
     let text = String::from_utf8_lossy(&text).into_owned();
     let val = |k: &str| {
         text.lines().find_map(|l| {
@@ -129,11 +100,13 @@ pub enum Failed {
     NoMachine,
     /// No answer in time.
     TimedOut,
+    /// The machine went away before it answered.
+    Lost,
 }
 
 /// Sends a request for Function `name` to a machine and waits for the answer:
 /// (the machine, the answer).
-pub fn call(store: &Path, name: &str, timeout: u64, request: &[u8]) -> Result<(String, Vec<u8>), Failed> {
+pub async fn call(store: &Path, name: &str, timeout: u64, request: &[u8]) -> Result<(String, Vec<u8>), Failed> {
     // Machines with an instance of it already (from the cluster's records).
     let warm: Vec<String> = cluster::with(store, |kv| {
         kv.list("fnstat/")
@@ -146,33 +119,32 @@ pub fn call(store: &Path, name: &str, timeout: u64, request: &[u8]) -> Result<(S
             .map(|(k, _)| k["fnstat/".len()..].to_string())
             .collect()
     });
-    let (tx, rx) = mpsc::channel();
-    let (id, machine) = {
-        let mut g = state();
-        let s = g.as_mut().unwrap();
-        let mut there: Vec<(&String, &mut Machine)> =
-            s.machines.iter_mut().filter(|(_, m)| m.polling > 0 || m.last.elapsed() < GONE_AFTER).collect();
+    let (tx, rx) = oneshot::channel();
+    let (id, machine) = with(|s| {
+        let mut there: Vec<(&String, &Machine)> = s.machines.iter().collect();
         if there.is_empty() {
             return Err(Failed::NoMachine);
         }
         there.sort_by(|a, b| a.0.cmp(b.0));
         s.turn = s.turn.wrapping_add(1);
         let pick = there.iter().position(|(_, m)| warm.contains(&m.name)).unwrap_or(s.turn % there.len());
+        let (session, m) = (there[pick].0.clone(), there[pick].1);
+        let machine = m.name.clone();
         s.next += 1;
         let id = s.next;
         let mut msg = format!("REQ {id} {name}\n").into_bytes();
         msg.extend_from_slice(request);
-        let m = &mut there[pick].1;
-        m.queue.push_back(msg);
-        let machine = m.name.clone();
-        s.pending.insert(id, tx);
-        (id, machine)
-    };
-    WAKE.notify_all();
-    match rx.recv_timeout(Duration::from_secs(timeout + START_GRACE)) {
-        Ok(a) => Ok((machine, a)),
+        if m.tx.send(msg).is_err() {
+            return Err(Failed::Lost);
+        }
+        s.pending.insert(id, (session, tx));
+        Ok((id, machine))
+    })?;
+    match tokio::time::timeout(Duration::from_secs(timeout + START_GRACE), rx).await {
+        Ok(Ok(a)) => Ok((machine, a)),
+        Ok(Err(_)) => Err(Failed::Lost),
         Err(_) => {
-            state().as_mut().unwrap().pending.remove(&id);
+            with(|s| s.pending.remove(&id));
             Err(Failed::TimedOut)
         }
     }

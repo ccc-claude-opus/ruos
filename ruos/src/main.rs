@@ -4,7 +4,7 @@
 //! kernel, keeps the image registry, and is the other end of every
 //! machine's remote channel: the OS runs in the browser, this is the
 //! backend on the desktop OS. A release carries all of that inside
-//! (assets.rs); HTTP is `tiny_http`, the WebSocket `tungstenite`.
+//! (assets.rs). HTTP and WebSockets are axum on tokio.
 //!
 //!   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
 //!   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
@@ -23,8 +23,8 @@
 //! them off.
 //!   GET /v1/cluster         the cluster's records (kube), JSON:
 //!                           {"now": MS, "fn_port": N, "records": {KEY: {"version", "updated", "value"}}}
-//!   GET /v1/ingress/next?machine=NAME&session=ID, POST /v1/ingress/answer
-//!                           requests from outside for Functions (ingress.rs)
+//!   WebSocket /v1/ingress?machine=NAME&session=ID  requests from outside
+//!                           for Functions, and their answers (ingress.rs)
 //! The WebSockets and the ingress only take requests from this origin
 //! (pages elsewhere, such as Functions' own pages, cannot use them).
 //!
@@ -37,15 +37,19 @@
 //! `ruos: listening on http://ADDR:PORT`. Data (the registry, disks,
 //! writable layers) lives in `$RUOS_HOME`, else `~/.ruos`.
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
 
-use tiny_http::{Header, Request, Response, Server};
-use tungstenite::protocol::Role;
-use tungstenite::{Message, WebSocket};
+use axum::Router;
+use axum::body::{Body, Bytes};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
+use axum::response::Response;
+use axum::routing::get;
+use futures_util::{SinkExt, StreamExt};
 
 mod assets;
 mod cluster;
@@ -100,13 +104,16 @@ fn main() {
         }
     }
     http::configure(http);
+    let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
+        eprintln!("ruos: tokio: {e}");
+        std::process::exit(1)
+    });
     if cmd == "serve" {
         if cfg.web.is_none() && !assets::present() {
             cfg.web = Some(PathBuf::from("web"));
         }
-        let server = listen(&bind, port);
-        functions(&bind, fn_port.unwrap_or(if port == 0 { 0 } else { port.saturating_add(10) }), cfg.store.clone());
-        return run_server(server, cfg);
+        let fn_port = fn_port.unwrap_or(if port == 0 { 0 } else { port.saturating_add(10) });
+        return rt.block_on(run(&bind, port, fn_port, cfg, None));
     }
     if !assets::present() {
         eprintln!("ruos: this build carries no system (a release does; from the repository use ./run.sh)");
@@ -115,14 +122,7 @@ fn main() {
     let home = home();
     let store = install(&home);
     let cfg = Config { web: None, kernel: None, store: Some(store) };
-    let server = listen(&bind, port);
-    functions(&bind, fn_port.unwrap_or(port.saturating_add(10)), cfg.store.clone());
-    let url = format!("http://{}/", server.server_addr());
-    println!("ruos: the OS is at {url} (Ctrl-C stops it); data in {}", home.display());
-    if open {
-        open_browser(&url);
-    }
-    run_server(server, cfg)
+    rt.block_on(run(&bind, port, fn_port.unwrap_or(port.saturating_add(10)), cfg, Some((home, open))));
 }
 
 fn usage(msg: &str) -> ! {
@@ -133,14 +133,53 @@ fn usage(msg: &str) -> ! {
     std::process::exit(2)
 }
 
-fn listen(bind: &str, port: u16) -> Server {
-    let server = Server::http((bind, port)).unwrap_or_else(|e| {
+async fn bind_or_exit(bind: &str, port: u16) -> tokio::net::TcpListener {
+    tokio::net::TcpListener::bind((bind, port)).await.unwrap_or_else(|e| {
         eprintln!("ruos: {bind}:{port}: {e}");
         std::process::exit(1)
-    });
-    println!("ruos: listening on http://{}", server.server_addr());
+    })
+}
+
+/// The server: the OS's port, and the function port (ingress.rs). `web`:
+/// the OS for a user (the data directory, and whether to open a browser).
+async fn run(bind: &str, port: u16, fn_port: u16, cfg: Config, web: Option<(PathBuf, bool)>) {
+    let main = bind_or_exit(bind, port).await;
+    let addr = main.local_addr().map(|a| a.to_string()).unwrap_or_default();
+    println!("ruos: listening on http://{addr}");
+    if let Some(store) = cfg.store.clone() {
+        match tokio::net::TcpListener::bind((bind, fn_port)).await {
+            Ok(l) => {
+                let fa = l.local_addr().map(|a| a.to_string()).unwrap_or_default();
+                if let Some(p) = fa.rsplit(':').next().and_then(|p| p.parse().ok()) {
+                    let _ = FN_PORT.set(p);
+                }
+                let _ = FN_BASE.set(format!("http://{fa}"));
+                println!("ruos: functions on http://{fa}/fn/");
+                let app = Router::new().fallback(function_request).layer(DefaultBodyLimit::max(ingress::MAX_BODY)).with_state(Arc::new(store));
+                tokio::spawn(async move {
+                    let _ = axum::serve(l, app).await;
+                });
+            }
+            Err(e) => eprintln!("ruos: functions: {bind}:{fn_port}: {e} (no function port)"),
+        }
+    }
+    if let Some((home, open)) = web {
+        let url = format!("http://{addr}/");
+        println!("ruos: the OS is at {url} (Ctrl-C stops it); data in {}", home.display());
+        if open {
+            open_browser(&url);
+        }
+    }
     let _ = std::io::stdout().flush();
-    server
+    let app = Router::new()
+        .route("/v1/remote", get(remote_ws))
+        .route("/v1/ingress", get(ingress_ws))
+        .route("/v1/cluster", get(cluster_json))
+        .fallback(serve_get)
+        .with_state(Arc::new(cfg));
+    if let Err(e) = axum::serve(main, app).await {
+        eprintln!("ruos: {e}");
+    }
 }
 
 static FN_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
@@ -151,32 +190,6 @@ pub fn fn_base() -> Option<String> {
     FN_BASE.get().cloned()
 }
 
-/// The function port: `/fn/NAME/…` to a machine's kube (ingress.rs).
-fn functions(bind: &str, port: u16, store: Option<PathBuf>) {
-    let Some(store) = store else { return };
-    let server = match Server::http((bind, port)) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("ruos: functions: {bind}:{port}: {e} (no function port)");
-            return;
-        }
-    };
-    let addr = server.server_addr().to_string();
-    if let Some(p) = addr.rsplit(':').next().and_then(|p| p.parse().ok()) {
-        let _ = FN_PORT.set(p);
-    }
-    let _ = FN_BASE.set(format!("http://{addr}"));
-    println!("ruos: functions on http://{addr}/fn/");
-    let _ = std::io::stdout().flush();
-    let store = Arc::new(store);
-    thread::spawn(move || {
-        for req in server.incoming_requests() {
-            let store = store.clone();
-            thread::spawn(move || function_request(req, &store));
-        }
-    });
-}
-
 /// Headers that belong to one connection, not to the request or answer.
 fn hop_by_hop(name: &str) -> bool {
     matches!(
@@ -185,58 +198,60 @@ fn hop_by_hop(name: &str) -> bool {
     )
 }
 
-fn plain(req: Request, status: u16, text: &str) {
-    let r = Response::from_data(text.as_bytes().to_vec()).with_status_code(status).with_header(header("Content-Type", "text/plain; charset=utf-8"));
-    let _ = req.respond(r);
+fn plain(status: u16, text: &str) -> Response {
+    let mut r = Response::new(Body::from(text.to_string()));
+    *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    r.headers_mut().insert("content-type", HeaderValue::from_static("text/plain; charset=utf-8"));
+    r
 }
 
-fn function_request(mut req: Request, store: &Path) {
-    let url = req.url().to_string();
-    let (path, query) = url.split_once('?').unwrap_or((&url, ""));
+/// The function port: `/fn/NAME/…` to a machine's kube (ingress.rs).
+async fn function_request(State(store): State<Arc<PathBuf>>, method: Method, uri: Uri, headers: HeaderMap, body: Bytes) -> Response {
+    let path = uri.path();
+    let query = uri.query().unwrap_or("");
     if path == "/" {
         let mut out = String::from("Functions here (kube apply one with expose = true):\n");
-        for n in ingress::list(store) {
+        for n in ingress::list(&store) {
             out += &format!("  /fn/{n}/\n");
         }
-        return plain(req, 200, &out);
+        return plain(200, &out);
     }
-    let Some(rest) = path.strip_prefix("/fn/") else { return plain(req, 404, "not found: Functions are at /fn/NAME/\n") };
+    let Some(rest) = path.strip_prefix("/fn/") else { return plain(404, "not found: Functions are at /fn/NAME/\n") };
     let (name, sub) = rest.split_once('/').map_or((rest, String::from("/")), |(n, s)| (n, format!("/{s}")));
     if !name_ok(name) {
-        return plain(req, 404, "bad function name\n");
+        return plain(404, "bad function name\n");
     }
-    let Some(timeout) = ingress::exposed(store, name) else {
-        return plain(req, 404, &format!("no function {name} (or it is not exposed: expose = true)\n"));
+    let Some(timeout) = ingress::exposed(&store, name) else {
+        return plain(404, &format!("no function {name} (or it is not exposed: expose = true)\n"));
     };
-    let mut body = Vec::new();
-    let _ = req.as_reader().take(ingress::MAX_BODY as u64 + 1).read_to_end(&mut body);
-    if body.len() > ingress::MAX_BODY {
-        return plain(req, 413, &format!("a request is at most {} bytes\n", ingress::MAX_BODY));
-    }
     // The HTTP envelope (doc/ingress.md).
-    let mut env = format!("{} {sub}{}{query}\n", req.method().as_str(), if query.is_empty() { "" } else { "?" });
-    for h in req.headers() {
-        if !hop_by_hop(h.field.as_str().as_str()) {
-            env += &format!("{}: {}\n", h.field.as_str(), h.value.as_str());
+    let mut env = format!("{method} {sub}{}{query}\n", if query.is_empty() { "" } else { "?" });
+    for (k, v) in &headers {
+        if !hop_by_hop(k.as_str()) {
+            env += &format!("{}: {}\n", k.as_str(), v.to_str().unwrap_or(""));
         }
     }
     env.push('\n');
     let mut env = env.into_bytes();
     env.extend_from_slice(&body);
     let t0 = std::time::Instant::now();
-    let (machine, answer) = match ingress::call(store, name, timeout, &env) {
+    let (machine, answer) = match ingress::call(&store, name, timeout, &env).await {
         Ok(a) => a,
         Err(ingress::Failed::NoMachine) => {
             eprintln!("ruos: fn {name}: no machine (503)");
-            return plain(req, 503, "no machine is running: open the OS in a browser tab (or a machine) to serve Functions\n");
+            return plain(503, "no machine is running: open the OS in a browser tab (or a machine) to serve Functions\n");
         }
         Err(ingress::Failed::TimedOut) => {
             eprintln!("ruos: fn {name}: no answer in time (504)");
-            return plain(req, 504, "the function did not answer in time\n");
+            return plain(504, "the function did not answer in time\n");
+        }
+        Err(ingress::Failed::Lost) => {
+            eprintln!("ruos: fn {name}: the machine went away (502)");
+            return plain(502, "the machine went away before it answered\n");
         }
     };
     // `HTTP STATUS\n` + header lines + `\n` + body, else all of it is text.
-    let (status, headers, body) = match answer.strip_prefix(b"HTTP ") {
+    let (status, hs, body) = match answer.strip_prefix(b"HTTP ") {
         Some(rest) => {
             let end = rest.windows(2).position(|w| w == b"\n\n").map_or(rest.len(), |i| i + 2);
             let head = String::from_utf8_lossy(&rest[..end]).into_owned();
@@ -247,39 +262,32 @@ fn function_request(mut req: Request, store: &Path) {
         }
         None => (200, vec![(String::from("Content-Type"), String::from("text/plain; charset=utf-8"))], answer),
     };
-    eprintln!("ruos: fn {name} {} {sub} → {machine}: {status} ({} ms)", req.method().as_str(), t0.elapsed().as_millis());
-    let mut r = Response::from_data(body).with_status_code(status).with_header(header("X-Ruos-Node", &machine));
-    for (k, v) in headers {
-        if !hop_by_hop(&k)
-            && let Ok(h) = Header::from_bytes(k.as_bytes(), v.as_bytes())
-        {
-            r = r.with_header(h);
+    eprintln!("ruos: fn {name} {method} {sub} → {machine}: {status} ({} ms)", t0.elapsed().as_millis());
+    let mut r = Response::new(Body::from(body));
+    *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+    if let Ok(v) = HeaderValue::from_str(&machine) {
+        r.headers_mut().insert("x-ruos-node", v);
+    }
+    for (k, v) in hs {
+        if let (false, Ok(k), Ok(v)) = (hop_by_hop(&k), HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
+            r.headers_mut().append(k, v);
         }
     }
-    let _ = req.respond(r);
+    r
 }
 
 /// A request from this server's own pages: no Origin, or this one; not from
 /// a page of another site (or of the function port, which is the same site).
-fn own_origin(req: &Request) -> bool {
-    let get = |n: &'static str| req.headers().iter().find(|h| h.field.equiv(n)).map(|h| h.value.as_str().to_string());
-    if get("Sec-Fetch-Site").is_some_and(|s| s != "same-origin" && s != "none") {
+fn own_origin(h: &HeaderMap) -> bool {
+    let get = |n: &str| h.get(n).and_then(|v| v.to_str().ok()).map(String::from);
+    if get("sec-fetch-site").is_some_and(|s| s != "same-origin" && s != "none") {
         return false;
     }
-    // Programs that are not browsers send none (or an empty one: the native
-    // machines' WebSocket client).
-    match (get("Origin").filter(|o| !o.is_empty()), get("Host")) {
+    // Programs that are not browsers send none (or an empty one).
+    match (get("origin").filter(|o| !o.is_empty()), get("host")) {
         (None, _) => true,
         (Some(o), Some(h)) => o == format!("http://{h}") || o == format!("https://{h}"),
         (Some(_), None) => false,
-    }
-}
-
-fn run_server(server: Server, cfg: Config) {
-    let cfg = Arc::new(cfg);
-    for req in server.incoming_requests() {
-        let cfg = cfg.clone();
-        thread::spawn(move || serve(req, &cfg));
     }
 }
 
@@ -333,102 +341,75 @@ fn open_browser(url: &str) {
     }
 }
 
-fn header(k: &str, v: &str) -> Header {
-    Header::from_bytes(k.as_bytes(), v.as_bytes()).unwrap()
-}
-
 /// Every response carries the cross-origin isolation headers
 /// (SharedArrayBuffer + Atomics.wait need them).
-fn respond(req: Request, status: u16, ctype: &str, cache: &str, body: Vec<u8>) {
-    let r = Response::from_data(body)
-        .with_status_code(status)
-        .with_header(header("Content-Type", ctype))
-        .with_header(header("Cross-Origin-Opener-Policy", "same-origin"))
-        .with_header(header("Cross-Origin-Embedder-Policy", "require-corp"))
-        .with_header(header("Cross-Origin-Resource-Policy", "same-origin"))
-        .with_header(header("Cache-Control", cache));
-    let _ = req.respond(r);
+fn respond(status: u16, ctype: &str, cache: &str, body: Vec<u8>) -> Response {
+    let mut r = Response::new(Body::from(body));
+    *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let h = r.headers_mut();
+    for (k, v) in [
+        ("content-type", ctype),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("cross-origin-embedder-policy", "require-corp"),
+        ("cross-origin-resource-policy", "same-origin"),
+        ("cache-control", cache),
+    ] {
+        if let Ok(v) = HeaderValue::from_str(v) {
+            h.insert(k, v);
+        }
+    }
+    r
 }
 
-fn serve(mut req: Request, cfg: &Config) {
-    let url = req.url().to_string();
-    let (path, query) = url.split_once('?').unwrap_or((&url, ""));
-    let path = path.split('#').next().unwrap_or("/");
-    let method = req.method().as_str().to_string();
-    if path.starts_with("/v1/remote") || path.starts_with("/v1/ingress") {
-        if !own_origin(&req) {
-            return respond(req, 403, "text/plain", "no-cache", b"only from this server's own pages\n".to_vec());
+type Params = Query<std::collections::HashMap<String, String>>;
+
+/// The page, the kernel and the registry.
+async fn serve_get(State(cfg): State<Arc<Config>>, method: Method, uri: Uri) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return respond(405, "text/plain", "no-cache", b"method not allowed\n".to_vec());
+    }
+    let path = uri.path().to_string();
+    tokio::task::spawn_blocking(move || {
+        if let Some(r) = path.strip_prefix("/v1/") {
+            return match registry(&cfg, r) {
+                Some((b, true)) => respond(200, "application/octet-stream", "public, max-age=31536000, immutable", b),
+                Some((b, false)) => respond(200, "application/octet-stream", "no-cache", b),
+                None => respond(404, "text/plain", "no-cache", b"not found\n".to_vec()),
+            };
         }
-    }
-    if path == "/v1/ingress/answer" && method == "POST" {
-        let mut body = Vec::new();
-        let _ = req.as_reader().take(ingress::MAX_BODY as u64 + 4096).read_to_end(&mut body);
-        let ok = ingress::answer(&body);
-        return respond(req, if ok { 204 } else { 404 }, "text/plain", "no-cache", Vec::new());
-    }
-    if method != "GET" && method != "HEAD" {
-        return respond(req, 405, "text/plain", "no-cache", b"method not allowed\n".to_vec());
-    }
-    if path == "/v1/remote" {
-        return remote_channel(req, cfg, query);
-    }
-    if path == "/v1/ingress/next" {
-        let q = |k: &str| query.split('&').find_map(|kv| kv.strip_prefix(&format!("{k}="))).unwrap_or("").to_string();
-        let (machine, session) = (q("machine"), q("session"));
-        if !name_ok(&machine) || !name_ok(&session) {
-            return respond(req, 400, "text/plain", "no-cache", b"machine and session\n".to_vec());
+        match file(&cfg, &path) {
+            Some((p, b)) => respond(200, content_type(&p), "no-cache", b),
+            None => respond(404, "text/plain", "no-cache", b"not found\n".to_vec()),
         }
-        let session = format!("w-{session}");
-        let msgs = ingress::next(&session, &machine);
-        if msgs.is_empty() {
-            return respond(req, 204, "text/plain", "no-cache", Vec::new());
-        }
-        let mut out = Vec::new();
-        for m in &msgs {
-            out.extend_from_slice(format!("{}\n", m.len()).as_bytes());
-            out.extend_from_slice(m);
-        }
-        let r = Response::from_data(out).with_status_code(200).with_header(header("Content-Type", "application/octet-stream"));
-        // The page went away while it waited: the requests go to the next poll.
-        if req.respond(r).is_err() {
-            ingress::put_back(&session, msgs);
-        }
-        return;
-    }
-    if path == "/v1/cluster" {
-        let Some(store) = cfg.store.as_ref() else { return respond(req, 404, "text/plain", "no-cache", b"no store\n".to_vec()) };
-        return respond(req, 200, "application/json", "no-cache", cluster::json(store, FN_PORT.get().copied()).into_bytes());
-    }
-    if let Some(r) = path.strip_prefix("/v1/") {
-        return match registry(cfg, r) {
-            Some((b, true)) => respond(req, 200, "application/octet-stream", "public, max-age=31536000, immutable", b),
-            Some((b, false)) => respond(req, 200, "application/octet-stream", "no-cache", b),
-            None => respond(req, 404, "text/plain", "no-cache", b"not found\n".to_vec()),
-        };
-    }
-    match file(cfg, path) {
-        Some((p, b)) => respond(req, 200, content_type(&p), "no-cache", b),
-        None => respond(req, 404, "text/plain", "no-cache", b"not found\n".to_vec()),
-    }
+    })
+    .await
+    .unwrap_or_else(|_| respond(500, "text/plain", "no-cache", Vec::new()))
 }
 
-/// A machine's remote channel: each binary message is a store request.
-fn remote_channel(req: Request, cfg: &Config, query: &str) {
-    let key = req.headers().iter().find(|h| h.field.equiv("Sec-WebSocket-Key")).map(|h| h.value.to_string());
-    let (Some(store), Some(key)) = (cfg.store.clone(), key) else {
-        return respond(req, 400, "text/plain", "no-cache", b"a WebSocket to a store\n".to_vec());
+async fn cluster_json(State(cfg): State<Arc<Config>>) -> Response {
+    let Some(store) = cfg.store.clone() else { return respond(404, "text/plain", "no-cache", b"no store\n".to_vec()) };
+    let j = tokio::task::spawn_blocking(move || cluster::json(&store, FN_PORT.get().copied())).await.unwrap_or_default();
+    respond(200, "application/json", "no-cache", j.into_bytes())
+}
+
+/// A machine's remote channel: each binary message is a store request,
+/// answered in turn (remote.rs).
+async fn remote_ws(
+    State(cfg): State<Arc<Config>>,
+    headers: HeaderMap,
+    Query(q): Params,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    if !own_origin(&headers) {
+        return respond(403, "text/plain", "no-cache", b"only from this server's own pages\n".to_vec());
+    }
+    let (Some(store), Ok(ws)) = (cfg.store.clone(), ws) else {
+        return respond(400, "text/plain", "no-cache", b"a WebSocket to a store\n".to_vec());
     };
-    let machine = query.split('&').find_map(|kv| kv.strip_prefix("machine=")).unwrap_or("default").to_string();
+    let machine = q.get("machine").cloned().unwrap_or_else(|| String::from("default"));
     // A machine connecting again names its session: same writable layers.
-    let session = query.split('&').find_map(|kv| kv.strip_prefix("session=")).filter(|s| name_ok(s) && s.len() <= 64);
-    let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
-    let resp = Response::empty(101)
-        .with_header(header("Upgrade", "websocket"))
-        .with_header(header("Connection", "Upgrade"))
-        .with_header(header("Sec-WebSocket-Accept", &accept));
-    let stream = req.upgrade("websocket", resp);
-    let mut ws = WebSocket::from_raw_socket(stream, Role::Server, None);
-    let s = remote::Session {
+    let session = q.get("session").filter(|s| name_ok(s) && s.len() <= 64);
+    let s = Arc::new(remote::Session {
         store,
         id: match session {
             Some(s) => format!("w-{s}"),
@@ -436,18 +417,60 @@ fn remote_channel(req: Request, cfg: &Config, query: &str) {
         },
         machine,
         fetched: Default::default(),
-    };
-    loop {
-        match ws.read() {
-            Ok(Message::Binary(b)) => {
-                if ws.send(Message::Binary(s.handle(&b).into())).is_err() {
-                    break;
+    });
+    ws.max_message_size(1 << 20).on_upgrade(move |mut socket: WebSocket| async move {
+        while let Some(Ok(m)) = socket.recv().await {
+            match m {
+                Message::Binary(b) => {
+                    let s = s.clone();
+                    let Ok(r) = tokio::task::spawn_blocking(move || s.handle(&b)).await else { break };
+                    if socket.send(Message::Binary(r.into())).await.is_err() {
+                        break;
+                    }
                 }
+                Message::Close(_) => break,
+                _ => {}
             }
-            Ok(Message::Close(_)) | Err(_) => break,
-            Ok(_) => {}
         }
+    })
+}
+
+/// A machine's ingress: requests for its Functions go out on it, the
+/// answers come back on it (ingress.rs).
+async fn ingress_ws(
+    headers: HeaderMap,
+    Query(q): Params,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    if !own_origin(&headers) {
+        return respond(403, "text/plain", "no-cache", b"only from this server's own pages\n".to_vec());
     }
+    let (Some(machine), Some(session)) = (q.get("machine").cloned(), q.get("session").cloned()) else {
+        return respond(400, "text/plain", "no-cache", b"machine and session\n".to_vec());
+    };
+    let Ok(ws) = ws else { return respond(400, "text/plain", "no-cache", b"a WebSocket\n".to_vec()) };
+    if !name_ok(&machine) || !name_ok(&session) {
+        return respond(400, "text/plain", "no-cache", b"machine and session\n".to_vec());
+    }
+    let session = format!("w-{session}");
+    ws.on_upgrade(move |socket: WebSocket| async move {
+        let (conn, mut reqs) = ingress::attach(&session, &machine);
+        let (mut out, mut inp) = socket.split();
+        loop {
+            tokio::select! {
+                r = reqs.recv() => match r {
+                    Some(m) => if out.send(Message::Binary(m.into())).await.is_err() { break },
+                    None => break,
+                },
+                m = inp.next() => match m {
+                    Some(Ok(Message::Binary(b))) => { ingress::answer(&b); }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    _ => {}
+                },
+            }
+        }
+        ingress::detach(&session, conn);
+    })
 }
 
 fn hex_id(s: &str) -> bool {

@@ -20,7 +20,7 @@ const IRQ_TIMER = 0, IRQ_CONSOLE = 1;
  *   `spawnWorker` starts a task thread Worker (task-worker.js or its Node twin).
  *   `remoteUrl` (ws://…/v1/remote): the server (ruos serve), the other end of the kernel's
  *   remote channel 0 (the store keeps the pods' writable layers there); remote
- *   channel 1 is `/v1/ingress` on the same server and session (long polls):
+ *   channel 1 is the `/v1/ingress` WebSocket on the same server and session:
  *   requests from outside for kube's Functions (doc/ingress.md).
  *   `dropRemoteAfter` (tests): close the connection once after that many
  *   answers, to exercise reconnecting.
@@ -241,50 +241,39 @@ function remoteLink(url, session, io, deliver) {
 }
 
 /**
- * Ingress: requests from outside for kube's Functions (doc/ingress.md).
- * The server cannot send on its own, so one long poll is always waiting
- * (`GET …/v1/ingress/next`, answered with the requests for this machine,
- * each `LEN\n` + message, or empty after 20 s); each answer is posted back.
- * After an error it tries again, waiting longer each time.
+ * Ingress: requests from outside for kube's Functions (doc/ingress.md), on
+ * their own WebSocket (`/v1/ingress`, same session): the server sends each
+ * request when it comes, kube answers by id. Nothing is resent after a
+ * drop (the server answers those requests 502); it connects again the same
+ * way as the remote channel.
  */
 function ingressLink(remoteUrl, session, deliver) {
   const u = new URL(remoteUrl);
-  u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
-  const base = `${u.origin}/v1/ingress`;
-  const machine = u.searchParams.get('machine') || 'default';
-  const dec = new TextDecoder();
-  let closed = false, delay = 250;
-  const poll = async () => {
-    while (!closed) {
-      try {
-        const r = await fetch(`${base}/next?machine=${machine}&session=${session}`, { cache: 'no-store' });
-        if (r.status === 200) {
-          const b = new Uint8Array(await r.arrayBuffer());
-          for (let i = 0; i < b.length;) {
-            const nl = b.indexOf(10, i);
-            if (nl < 0) break;
-            const n = Number(dec.decode(b.subarray(i, nl)));
-            deliver(b.slice(nl + 1, nl + 1 + n));
-            i = nl + 1 + n;
-          }
-        } else if (r.status !== 204) {
-          throw new Error(`ingress: ${r.status}`);
-        }
-        delay = 250;
-      } catch {
-        if (closed) return;
-        await new Promise((res) => setTimeout(res, delay));
-        delay = Math.min(delay * 2, 8000);
-      }
-    }
+  const full = `${u.origin.replace(/^http/, 'ws')}/v1/ingress?machine=${u.searchParams.get('machine') || 'default'}&session=${session}`;
+  let ws = null, open = false, closed = false, delay = 250;
+  const connect = () => {
+    ws = new WebSocket(full);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+      open = true;
+      delay = 250;
+    };
+    ws.onmessage = (e) => deliver(new Uint8Array(e.data));
+    ws.onclose = () => {
+      open = false;
+      if (closed) return;
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 8000);
+    };
   };
-  poll();
+  connect();
   return {
     send(b) {
-      fetch(`${base}/answer?session=${session}`, { method: 'POST', body: b }).catch(() => {});
+      if (open) ws.send(b);
     },
     close() {
       closed = true;
+      ws?.close();
     },
   };
 }

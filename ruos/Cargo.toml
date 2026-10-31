@@ -13,6 +13,7 @@ include = ["src/**", "build.rs", "assets/**", "Cargo.toml", "README.md", "LICENS
 
 [dependencies]
 blake3 = "1.8"
-tiny_http = "0.12"
-tungstenite = "0.30"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 ureq = "3"
