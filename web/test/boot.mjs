@@ -104,7 +104,9 @@ if ((await fetch(`${base}/v1/blobs/${'0'.repeat(64)}`)).status !== 404) fail('mi
 process.stdout.write(execFileSync(podimg, ['verify', base, 'hello']).toString());
 
 const remoteUrl = base.replace(/^http/, 'ws') + `/v1/remote?machine=${machine}`;
-const worker = new Worker(path.join(here, 'node_worker.mjs'), { workerData: { wasm, remoteUrl, dropRemoteAfter } });
+// The machine's own storage (the browser's IndexedDB): build/local/MACHINE.
+const localDir = path.join(root, 'build/local', machine);
+const worker = new Worker(path.join(here, 'node_worker.mjs'), { workerData: { wasm, remoteUrl, dropRemoteAfter, localDir } });
 let out = '';
 let typed = false;
 let snapshotLine = 'snapshot: none';
@@ -220,6 +222,11 @@ async function appsTest() {
   say(`guestbook bad ${r.status} ${r.j?.error}`);
   r = await call('GET', 'guestbook/api/notes');
   say(`guestbook notes ${r.j.map((n) => `${n.name}:${n.text}`).join(' | ')}`);
+  // The same program with its database in this machine's browser (sql:guestbook@local).
+  r = await call('POST', 'lguest/api/notes', { name: 'cy', text: 'kept in the browser' });
+  say(`lguest post ${r.status} id=${r.j?.id}`);
+  r = await call('GET', 'lguest/api/notes');
+  say(`lguest notes ${r.j.map((n) => `${n.name}:${n.text}`).join(' | ')}`);
 
   await call('POST', 'todo/api/todos', { title: 'read lesson 17' });
   await call('POST', 'todo/api/todos', { title: 'write a site' });

@@ -97,14 +97,16 @@ impl Store<'_> {
     }
 
     /// The program (the image's wasm32 build).
+    /// Image `name`'s program: (object id, entry), if the store knows it.
+    fn program_of(&self, name: &str) -> Option<(Id, String)> {
+        let i = self.index(name)?;
+        let m = objstore::manifest_of(self, &i, libsys::ARCH).or_else(|_| objstore::manifest_of(self, &i, "wasm32")).ok()?;
+        let e = self.lookup(&m.layers, &m.entry).ok()?;
+        Some((e.id, m.entry))
+    }
+
     fn get_program(&self, name: &str, c: Channel) -> libsys::Result<()> {
-        let man = |i: Id| {
-            objstore::manifest_of(self, &i, libsys::ARCH).or_else(|_| objstore::manifest_of(self, &i, "wasm32")).ok()
-        };
-        let found = self.index(name).and_then(man).and_then(|m| {
-            let e = self.lookup(&m.layers, &m.entry).ok()?;
-            Some((self.get(&e.id)?, m.entry))
-        });
+        let found = self.program_of(name).and_then(|(id, entry)| Some((self.get(&id)?, entry)));
         let Some((prog, entry)) = found else { return c.write(&[NOT_FOUND], &[]) };
         let m = Memory::create(prog.len() as u64)?;
         m.write(0, prog)?;
@@ -265,6 +267,10 @@ impl Store<'_> {
     /// An object as a copy-on-write memory object (one kept per object).
     fn object_mem(&mut self, id: &str, c: Channel) -> libsys::Result<()> {
         let Some(id) = Id::parse(id) else { return c.write(&[NOT_FOUND], &[]) };
+        // A big file of a pulled image is not kept across boots.
+        if self.get(&id).is_none() && self.remote.is_some() {
+            self.pull_object(&id);
+        }
         let Some(len) = self.get(&id).map(|b| b.len()) else { return c.write(&[NOT_FOUND], &[]) };
         if !self.mems.contains_key(&id) {
             let m = Memory::create(len.max(1) as u64)?;
@@ -312,7 +318,9 @@ impl Store<'_> {
         Some(match op {
             GET => {
                 let name = text(&f(1)[0]);
-                if self.index(name).is_none() {
+                // Not known, or known without its program (a big object is
+                // not in the disk log): from the registry.
+                if self.program_of(name).is_none_or(|(id, _)| self.get(&id).is_none()) {
                     self.pull(name);
                 }
                 let _ = self.get_program(name, c);

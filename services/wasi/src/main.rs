@@ -284,7 +284,8 @@ fn read_into(fd: u32, want: usize) -> Result<Vec<u8>, i32> {
             let s = st();
             if s.stdin.is_empty() && !s.eof {
                 let Some(c) = s.console else { return Ok(Vec::new()) };
-                let mut buf = alloc::vec![0u8; libsys::console::MAX_LINE];
+                // Lines from a served console may be long (a whole SQL request).
+                let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES - 1];
                 match c.read_line(&mut buf) {
                     Ok(n) => {
                         s.stdin.extend_from_slice(&buf[..n]);

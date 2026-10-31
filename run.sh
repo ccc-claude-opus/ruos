@@ -12,7 +12,7 @@ mkdir -p "$OUT"
 
 # User programs: wasm modules with an imported shared memory (threads =
 # instances on it). Each becomes an image (its Podfile.toml).
-USER_PROGRAMS=(init store console shell dock kube overlay wasi ktest peer hello snoop fault hog writer bench worker echo greet site)
+USER_PROGRAMS=(init store console shell dock kube overlay wasi local ktest peer hello snoop fault hog writer bench worker echo greet site)
 # The example web sites: binaries of one package (apps/webapps).
 WEB_APPS=(guestbook todo wiki short weather)
 TARGET=wasm32-unknown-unknown
@@ -34,14 +34,45 @@ build_user() {
 # them): the crates in wasi-programs/ go with the user programs (and into
 # the root image's /bin); uutils coreutils (crates.io, `cargo install`
 # caches it in target/wasi-tools) becomes its own image, only in the
-# registry (build/store): it is too big for the boot pack.
+# registry (build/store): it is too big for the boot pack. Crates with C
+# in them (sqlited: SQLite) need wasi-sdk: WASI_SDK, by default
+# ~/opt/wasi-sdk-34.0-arm64-macos (github.com/WebAssembly/wasi-sdk releases).
+WASI_SDK=${WASI_SDK:-$HOME/opt/wasi-sdk-34.0-arm64-macos}
+# SQLite's amalgamation (sqlite.org/download.html: shell.c, sqlite3.c) for
+# the sqlite3 shell.
+SQLITE_SRC=${SQLITE_SRC:-$HOME/opt/sqlite-src/sqlite-amalgamation-3540100}
 build_wasi() {
     local d n
     for d in "$ROOT"/wasi-programs/*/Cargo.toml; do
         n=$(basename "$(dirname "$d")")
-        cargo build --release --quiet --target wasm32-wasip1 --manifest-path "$d"
+        if [ "$n" = sqlited ]; then
+            if [ ! -x "$WASI_SDK/bin/clang" ]; then
+                echo "run.sh: no wasi-sdk at $WASI_SDK: sqlited (local SQLite) not built" >&2
+                continue
+            fi
+            # SQLite needs wasi-libc's emulated mmap, getpid, signals and clocks.
+            local lib="$WASI_SDK/share/wasi-sysroot/lib/wasm32-wasip1" e flags=""
+            for e in mman getpid signal process-clocks; do flags+=" -C link-arg=$lib/libwasi-emulated-$e.a"; done
+            CC_wasm32_wasip1="$WASI_SDK/bin/clang" AR_wasm32_wasip1="$WASI_SDK/bin/llvm-ar" \
+                CFLAGS_wasm32_wasip1="--sysroot=$WASI_SDK/share/wasi-sysroot" RUSTFLAGS="$flags" \
+                cargo build --release --quiet --target wasm32-wasip1 --manifest-path "$d"
+        else
+            cargo build --release --quiet --target wasm32-wasip1 --manifest-path "$d"
+        fi
         cp "$(dirname "$d")/target/wasm32-wasip1/release/$n.wasm" "$OUT/user-wasm32/$n.wasm"
     done
+    if [ -x "$WASI_SDK/bin/clang" ] && [ -f "$SQLITE_SRC/shell.c" ]; then
+        local out="$OUT/user-wasm32/sqlite3.wasm"
+        if [ ! -f "$out" ] || [ "$SQLITE_SRC/sqlite3.c" -nt "$out" ] || [ "$ROOT/wasi-programs/sqlite3/nosystem.c" -nt "$out" ]; then
+            "$WASI_SDK/bin/clang" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" -Os \
+                -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_OMIT_POPEN -DSQLITE_OMIT_WAL -DHAVE_LOCALTIME_R \
+                -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_GETPID -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS \
+                "$SQLITE_SRC/shell.c" "$SQLITE_SRC/sqlite3.c" "$ROOT/wasi-programs/sqlite3/nosystem.c" \
+                -lwasi-emulated-mman -lwasi-emulated-getpid -lwasi-emulated-signal -lwasi-emulated-process-clocks -o "$out"
+        fi
+    else
+        echo "run.sh: no wasi-sdk or no SQLite source at $SQLITE_SRC: the sqlite3 shell not built" >&2
+    fi
     cargo install --quiet --root "$ROOT/target/wasi-tools" --target-dir "$ROOT/target/wasi-tools-build" \
         --target wasm32-wasip1 coreutils@0.12.0 --no-default-features --features feat_wasm 2> /dev/null || true
     # Only the installed binary is needed again (cargo install skips what is
@@ -69,6 +100,11 @@ build_images() {
     # machine pulls them when first used.
     for pf in "$ROOT"/apps/webapps/Podfile*.toml; do
         "$ROOT/target/release/podimg" build "$pf" --store "$OUT/extra" --programs "wasm32=$OUT/user-wasm32" > /dev/null
+    done
+    for x in sqlited sqlite3; do
+        if [ -f "$OUT/user-wasm32/$x.wasm" ]; then
+            "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/$x/Podfile.toml" --store "$OUT/extra" --programs "wasm32=$OUT/user-wasm32" > /dev/null
+        fi
     done
     if [ -f "$OUT/wasi-tools/coreutils.wasm" ]; then
         "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/coreutils/Podfile.toml" --store "$OUT/extra" --programs "wasm32=$OUT/wasi-tools" > /dev/null

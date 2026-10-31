@@ -3,6 +3,7 @@
 // Out: {type:'out', text}, {type:'exit', code}, {type:'spawn', id, port}, {type:'kill', id},
 //      {type:'snapshot', json}.
 import { bootKernel } from './kernel_host.js';
+import { idbStore } from './local_store.js';
 
 let kernel = null;
 let nextWorker = 1;
@@ -19,6 +20,8 @@ self.onmessage = async (e) => {
       kernel = await bootKernel(bytes, {
         host: 'browser',
         remoteUrl: remote.href,
+        // This machine's own storage: this browser's IndexedDB.
+        localStore: idbStore(m.machine || 'browser'),
         // Task Workers are created by the page (nested Workers are not
         // available everywhere); the kernel talks to each over a MessagePort.
         spawnWorker() {

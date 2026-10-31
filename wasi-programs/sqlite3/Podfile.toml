@@ -1,0 +1,8 @@
+# sqlite3: SQLite's own command-line shell (C: shell.c + sqlite3.c from the
+# amalgamation, built with wasi-sdk). Its files are the shell's current
+# directory. Only in the registry: pulled when first used.
+name = "sqlite3"
+entry = "/bin/sqlite3"
+
+[programs]
+"/bin/sqlite3" = "sqlite3"

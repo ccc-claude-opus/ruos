@@ -7,7 +7,7 @@ members = [
     "ruos", "podimg", "abi", "libsys", "objstore",
     "services/init", "services/store", "services/console", "services/shell", "services/dock",
     "services/overlay", "apps/writer",
-    "apps/hello", "apps/snoop", "apps/fault", "apps/ktest", "apps/peer", "apps/hog", "apps/bench", "apps/worker", "apps/echo", "apps/greet", "apps/site", "apps/webapps", "services/kube", "services/wasi",
+    "apps/hello", "apps/snoop", "apps/fault", "apps/ktest", "apps/peer", "apps/hog", "apps/bench", "apps/worker", "apps/echo", "apps/greet", "apps/site", "apps/webapps", "services/kube", "services/wasi", "services/local",
 ]
 default-members = ["ruos", "podimg", "objstore"]
 exclude = ["kernel", "wasi-programs"]

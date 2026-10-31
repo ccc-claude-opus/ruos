@@ -1,7 +1,9 @@
 //! init: the first task. Handle 0 is the serial port, 1 the boot pack, 2
-//! the root quota; then, with a server, the server connection and ingress. Starts the store service from the pack, runs the
-//! kernel tests, then console, dock, kube and a shell (with `backend`, the
-//! store's web client); ends with the shell.
+//! the root quota; then, with a server, the server connection, ingress and
+//! the browser's own storage. Starts the store service from the pack, runs
+//! the kernel tests, then console, local (the machine's own storage), dock,
+//! kube and a shell (with `backend`, the store's web client, and `local`);
+//! ends with the shell.
 #![no_std]
 #![no_main]
 
@@ -27,15 +29,15 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
 }
 
 /// The store service, started straight from the pack: the store, its `web`
-/// client (the backend capability: http, sql:NAME, redis:NAME) and the ingress channel
-/// from the server (for kube).
-fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>)> {
+/// client (the backend capability: http, sql:NAME, redis:NAME), the ingress channel
+/// from the server (for kube) and the browser's storage (for local).
+fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>, Option<Channel>)> {
     let size = pack_mem.size().ok()?;
     let mut bytes = alloc::vec![0u8; size as usize];
     pack_mem.read(0, &mut bytes).ok()?;
     let pack = Pack::parse(&bytes, false).ok()?;
     let mut ns = Namespace::new();
-    let mut ingress = None;
+    let (mut ingress, mut storage) = (None, None);
     let mut have_remote = false;
     // The server's channels follow the quota.
     let mut found = alloc::vec::Vec::new();
@@ -47,17 +49,19 @@ fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>)> {
     }
     for (h, t) in found {
         match t {
-            // The server connection first (the store's), then ingress (kube's).
+            // The server connection first (the store's), then ingress
+            // (kube's), then the browser's storage (local's).
             ObjType::Channel if !have_remote => {
                 ns = ns.add("remote", Handle(h));
                 have_remote = true;
             }
-            ObjType::Channel => ingress = Some(Channel(Handle(h))),
+            ObjType::Channel if ingress.is_none() => ingress = Some(Channel(Handle(h))),
+            ObjType::Channel => storage = Some(Channel(Handle(h))),
             _ => {}
         }
     }
     let (web, web_srv) = Channel::create().ok()?;
-    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, ingress))
+    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, ingress, storage))
 }
 
 /// A new client channel of the console.
@@ -68,7 +72,7 @@ fn console_client(con: &Console) -> Option<Handle> {
 }
 
 fn main(_arg: usize) -> i64 {
-    let Some((store, web, ingress)) = start_store(Memory(Handle(1))) else {
+    let Some((store, web, ingress, storage)) = start_store(Memory(Handle(1))) else {
         println!("init: cannot start the store");
         return 1;
     };
@@ -83,6 +87,18 @@ fn main(_arg: usize) -> i64 {
     let ns = Namespace::new().add("serial", Handle(0)).add("client", con_srv.0);
     let Ok(console_task) = store.spawn("console", &ns, None) else { return 1 };
     let con = Console(con);
+
+    // local: files, KV, caches and SQLite kept by the browser (doc/storage.md).
+    let local = storage.and_then(|st| {
+        let (l, l_srv) = Channel::create().ok()?;
+        let s = store.connect().ok()?;
+        let ns = Namespace::new().add("storage", st.0).add("store", s.0.0).add("client", l_srv.0);
+        store.spawn("local", &ns, None).ok()?;
+        Some(libsys::local::Local(l))
+    });
+    if local.is_some() {
+        println!("init: started local");
+    }
 
     // Pods get at most 160 MiB, 32 tasks and 64 threads between them.
     let root = Quota(Handle(2));
@@ -111,18 +127,24 @@ fn main(_arg: usize) -> i64 {
     if let Some(i) = ingress {
         ns = ns.add("ingress", i.0);
     }
+    if let Some(l) = local.and_then(|l| l.dup().ok()) {
+        ns = ns.add("local", l.0.0);
+    }
     let Ok(kube_task) = store.spawn("kube", &ns, None) else { return 1 };
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
     // The shell has all of the backend; `http` alone is curl's.
     let Ok(sh_http) = backend.grant(&["http"]) else { return 1 };
-    let ns = Namespace::new()
+    let mut ns = Namespace::new()
         .add("console", c)
         .add("store", s.0.0)
         .add("dock", dock.0)
         .add("kube", kube.0)
         .add("backend", web.0)
         .add("http", sh_http.0.0);
+    if let Some(l) = local {
+        ns = ns.add("local", l.0.0);
+    }
     let shell = match store.spawn("shell", &ns, None) {
         Ok(t) => t,
         Err(e) => {

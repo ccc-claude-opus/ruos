@@ -35,7 +35,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十七課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十八課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -54,6 +54,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 1. **從外面呼叫函式**：`expose = true`、函式埠的網址、請求送到哪台機器、關掉所有分頁就是 503
 1. **現成的程式（WASI）**：`wasi-hello`、`coreutils sort poem.txt | coreutils head -n 2`、程式只看得到目前目錄
 1. **網站範例：資料在後端**：留言板、待辦、wiki、短網址、天氣，資料在 `sql:NAME`，shell 用 `sql -d` 看得到
+1. **資料放在哪裡：前端或後端**：`sql -d app@local`、`redis -d cache@local`、`kv … notes@local`，同一個留言板只改 `uses` 就把資料放進瀏覽器
 
 「叢集」頁畫出 server 上 kube 的記錄：每個節點（機器）一張卡片，列出分到它的 pod 與狀態，下面是 Deployment 與最近的事件。
 
@@ -188,6 +189,21 @@ shell 找程式的順序：內建指令 → `/bin/NAME` → 同名的映像。
 | `redis` | `redis [-d NAME] COMMAND ARGS...` | 後端的 Redis（`ruos serve --redis cache=redis://127.0.0.1:6379/`） |
 | `curl` | `curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL` | HTTP / HTTPS 請求；輸出可以接管線，`-o` 存成檔案，`-f` 遇到 4xx/5xx 就失敗（`$?` = 22） |
 
+### 資料放在這台機器（`@local`）
+
+`sql`、`redis`、`kv` 的名字後面加上 `@local`，資料就放在**這個瀏覽器**（IndexedDB）裡，而不是伺服器：
+
+| 指令 | 說明 |
+|---|---|
+| `sql -d app@local "SELECT …"` | 前端的 SQLite：C 寫的 SQLite 用 wasi-sdk 編成 WASI 程式（`sqlited`），在 ruos 裡跑 |
+| `redis -d cache@local SET k v EX 60` | ruos 自己寫的小 Redis（字串、到期、list、hash、set） |
+| `kv put notes@local KEY VALUE` | KV namespace |
+| `sqlite3 music.db "SELECT …"` | SQLite 官方的命令列 shell（C，wasi-sdk 編的 WASI 程式；檔案在目前目錄） |
+| `local` | 這台機器自己存了什麼 |
+| `run IMAGE sql:app@local` | 程式拿到的名字是 `sql:app`，分不出資料在哪裡 |
+
+kube 的 manifest 也一樣：`uses = ["sql:guestbook@local"]`。**程式一行都不用改**：它只認得名稱空間裡的 `sql:guestbook`，另一端是後端還是瀏覽器，由給它的人決定。不過意思不同：放在瀏覽器的資料只有這台機器看得到。設計見 [doc/storage.md](doc/storage.md)。
+
 瀏覽器裡的網頁不能直接連別的網站，所以請求由 server（`ruos serve`）代為發出、會自動跟著轉址，最多 10 秒、4 MiB。server 不會連到它自己那邊的網路（loopback、10.*、172.16–31.*、192.168.*、169.254.*、100.64.*、IPv6 的 ULA / link-local），轉址或 DNS 指過去也一樣；要開放某個位址用 `ruos serve --http-allow ADDR:PORT`，整個關掉用 `--no-http`。在系統裡，只有拿到 `http` 這個 capability 的程式能上網：shell 有，`run IMAGE http` 才會交給別的程式。
 
 ### 能力（capability）
@@ -311,9 +327,9 @@ app = "web"
 | `abi/` | 系統呼叫號碼、錯誤碼、rights（核心與使用者空間共用） |
 | `libsys/` | 使用者空間函式庫：IPC、名稱空間、各服務的 client、映像 |
 | `objstore/` | 物件庫格式與 pack（OS 與主機共用） |
-| `services/` | init、console、shell、store、overlay、dock、kube、wasi |
+| `services/` | init、console、shell、store、overlay、dock、kube、wasi、local（瀏覽器自己的儲存） |
 | `apps/` | snoop、hello、writer、hog、bench、ktest 等；`webapps` 是五個網站範例 |
-| `wasi-programs/` | WASI 程式（`wasm32-wasip1`）：`wasi-hello`，與 uutils coreutils 的映像 |
+| `wasi-programs/` | WASI 程式（`wasm32-wasip1`）：`wasi-hello`、`sqlited`（SQLite，要 wasi-sdk），與 uutils coreutils 的映像 |
 | `podimg/` | 主機工具：建映像 |
 | `ruos/` | 發布的套件：`ruos` 指令（後端：registry + 可寫層 + 磁碟 + 叢集記錄 + 網頁），發布時內含預先建好的系統 |
 | `web/` | 網頁：終端機、課程（`lessons.js`）、系統圖（`inspector.js`）、核心 Worker |

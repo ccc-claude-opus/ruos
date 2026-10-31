@@ -267,6 +267,25 @@ export const LESSONS = [
       { cmd: 'kube delete guestbook; kube delete todo; kube delete wiki; kube delete short; kube delete weather', note: '收拾（資料庫還在後端）' },
     ],
   },
+  {
+    title: '18. 資料放在哪裡：前端或後端',
+    text: [
+      '同樣的 `sql`、`redis`、`kv`，名字後面加上 `@local`，資料就放在這台機器自己的瀏覽器（IndexedDB）裡，不在伺服器。SQLite 是 C 寫的，用 wasi-sdk 編成 WASI 程式 `sqlited`，在 ruos 裡讀寫 `local` 服務給它的檔案；Redis 是 ruos 自己寫的小版本。',
+      '程式完全不知道差別：`uses = ["sql:guestbook@local"]` 讓程式的名稱空間裡一樣是 `sql:guestbook`，只是另一端換成 `local` 服務。這就是 capability 的好處：資料在哪裡由「給的人」決定。但意思不同：放在瀏覽器的資料，只有這個瀏覽器的這台機器看得到。',
+    ],
+    steps: [
+      { cmd: 'sql -d app@local "CREATE TABLE t (id INTEGER PRIMARY KEY, who TEXT)"', note: '前端的 SQLite（第一次會從 registry 拉 sqlited）' },
+      { cmd: 'sql -d app@local "INSERT INTO t (who) VALUES (\'ann\'), (\'bob\')"; sql -d app@local "SELECT * FROM t"', note: '存在瀏覽器的 IndexedDB' },
+      { cmd: 'redis -d cache@local SET greeting hello EX 60; redis -d cache@local TTL greeting', note: 'ruos 自己的小 Redis，60 秒後過期' },
+      { cmd: 'kv put notes@local today 寫作業; kv get notes@local today', note: 'KV 也一樣' },
+      { cmd: 'local', note: '這台機器自己存了什麼' },
+      { cmd: 'sqlite3 music.db "CREATE TABLE songs (title TEXT, plays INTEGER); INSERT INTO songs VALUES (\'a\', 7), (\'b\', 8);"; sqlite3 -box music.db "SELECT * FROM songs"', note: 'SQLite 官方的 C 程式 sqlite3，在 ruos 裡跑（檔案在目前目錄）' },
+      { cmd: 'run snoop console sql:app@local', note: 'snoop 看到的名字是 sql:app，分不出在哪裡' },
+      { cmd: 'sed \'s/sql:guestbook/sql:guestbook@local/; s/name = "guestbook"/name = "lguest"/\' kube/app-guestbook.toml > /tmp/lguest.toml; cat /tmp/lguest.toml', note: '同一個留言板，只改 uses' },
+      { cmd: 'kube apply /tmp/lguest.toml; kube get fn', note: '打開 lguest 的網址留言：留言存在這個瀏覽器' },
+      { cmd: 'sql -d guestbook@local "SELECT * FROM notes"', note: '重新整理頁面（重開機）後資料還在' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

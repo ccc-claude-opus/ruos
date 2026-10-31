@@ -194,12 +194,16 @@ redis LRANGE list 0 -1
 redis GET nothing
 redis -d nosuch PING
 kube apply kube/app-guestbook.toml kube/app-todo.toml kube/app-wiki.toml kube/app-short.toml
+sed 's/sql:guestbook/sql:guestbook@local/; s/name = "guestbook"/name = "lguest"/' kube/app-guestbook.toml > /tmp/lguest.toml
+kube apply /tmp/lguest.toml
 cat kube/app-weather.toml > /tmp/weather.toml
 echo 'args = ["http://127.0.0.1:@HTTP_PORT@"]' >> /tmp/weather.toml
 kube apply /tmp/weather.toml
 echo apps-test: go
 sleep 25
 sql -d guestbook "SELECT name, text FROM notes"
+sql -d guestbook@local "SELECT name, text FROM notes"
+kube delete lguest
 sql -d todo "SELECT title, done FROM todos"
 sql -d wiki "SELECT name, revisions FROM pages"
 sql -d short "SELECT url, hits FROM links"
@@ -209,6 +213,36 @@ kube delete todo
 kube delete wiki
 kube delete short
 kube delete weather
+local
+redis -d c@local SET greeting hello
+redis -d c@local GET greeting
+redis -d c@local INCR hits
+redis -d c@local INCR hits
+redis -d c@local RPUSH l a b c
+redis -d c@local LRANGE l 0 -1
+redis -d c@local HSET h name ann
+redis -d c@local HGETALL h
+redis -d c@local GET nothing
+redis -d c@local SET temp 1 PX 200
+sleep 0.4
+redis -d c@local EXISTS temp
+redis -d c@local LPUSH greeting x
+kv put notes@local k1 hello there
+kv get notes@local k1
+kv ls notes@local
+sql -d app@local "CREATE TABLE t (id INTEGER PRIMARY KEY, who TEXT, n INTEGER)"
+sql -d app@local "INSERT INTO t (who, n) VALUES ('ann', 3), ('bob', 5)"
+sql -d app@local "SELECT who, n FROM t ORDER BY n DESC"
+echo "SELECT COUNT(*) AS c FROM t" | sql -d app@local
+sql -d app@local "SELECT * FROM nope"
+run snoop console sql:app@local
+sql -d No@local "SELECT 1"
+local
+sqlite3 music.db "CREATE TABLE songs (title TEXT, plays INTEGER); INSERT INTO songs VALUES ('a', 7), ('b', 8);"
+sqlite3 -box music.db "SELECT title, plays FROM songs ORDER BY plays DESC"
+echo "SELECT sum(plays) AS total FROM songs;" | sqlite3 music.db
+ls music.db
+rm music.db
 wasi-hello one two
 wasi-hello write notes.txt
 cat notes.txt

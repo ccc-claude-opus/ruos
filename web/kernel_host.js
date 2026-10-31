@@ -3,6 +3,7 @@
 // boots it, then delivers timer ticks and console bytes through `kernel_irq`.
 import { wasmMachine } from './dtb.js';
 import { ANSWER, memoryLimits } from './task_runtime.js';
+import { localLink } from './local_store.js';
 
 export class KernelExit extends Error {
   constructor(code) {
@@ -22,6 +23,8 @@ const IRQ_TIMER = 0, IRQ_CONSOLE = 1;
  *   remote channel 0 (the store keeps the pods' writable layers there); remote
  *   channel 1 is the `/v1/ingress` WebSocket on the same server and session:
  *   requests from outside for kube's Functions (doc/ingress.md).
+ *   `localStore` ({get, put, del, keys}, local_store.js): this machine's own
+ *   storage, remote channel 2 (the `local` service's; doc/storage.md).
  *   `dropRemoteAfter` (tests): close the connection once after that many
  *   answers, to exercise reconnecting.
  */
@@ -32,7 +35,7 @@ export async function bootKernel(wasm, io) {
   let nextTask = 1;
   const kmem = () => new Uint8Array(inst.exports.memory.buffer);
   const BLOCKED = -(2n ** 63n);
-  let remote = null, ingress = null;
+  let remote = null, ingress = null, local = null;
   const dec = new TextDecoder();
   const t0 = performance.now();
 
@@ -135,9 +138,10 @@ export async function bootKernel(wasm, io) {
       kmem().set(new Uint8Array(m.buffer, va, len), dst);
       return 0;
     },
-    remote_open: (i) => (io.remoteUrl && i <= 1 ? 1 : 0),
+    // Local storage only with a server: init tells the channels apart by order.
+    remote_open: (i) => (io.remoteUrl && (i <= 1 || (i === 2 && io.localStore)) ? 1 : 0),
     remote_send(i, p, len) {
-      (i === 0 ? remote : ingress)?.send(kmem().slice(p, p + len));
+      [remote, ingress, local][i]?.send(kmem().slice(p, p + len));
     },
     user_write(task, va, src, len) {
       const m = tasks.get(task)?.memory;
@@ -158,6 +162,7 @@ export async function bootKernel(wasm, io) {
     const session = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
     remote = remoteLink(io.remoteUrl, session, io, deliver(0));
     ingress = ingressLink(io.remoteUrl, session, deliver(1));
+    if (io.localStore) local = localLink(io.localStore, deliver(2));
   }
   const mem = inst.exports.memory;
   const dtb = wasmMachine({ memoryBytes: mem.buffer.byteLength, host: io.host || 'browser' });

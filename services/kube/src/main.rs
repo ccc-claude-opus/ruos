@@ -758,7 +758,7 @@ fn main(_arg: usize) -> i64 {
         dock,
         store,
         api,
-        kubelet: Kubelet::new(port, dock, ns::get("backend").map(|h| Store(Channel(h)))),
+        kubelet: Kubelet::new(port, dock, ns::get("backend").map(|h| Store(Channel(h))), libsys::local::Local::get()),
         control: Controller::new(),
         clients: Vec::new(),
         leader: false,

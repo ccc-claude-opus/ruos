@@ -1,0 +1,7 @@
+# sqlited: SQLite (WASI, built with wasi-sdk) for the local service's
+# databases (sql:NAME@local). Only in the registry: pulled when first used.
+name = "sqlited"
+entry = "/bin/sqlited"
+
+[programs]
+"/bin/sqlited" = "sqlited"

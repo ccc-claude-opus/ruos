@@ -64,7 +64,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1 — **完成**；5. 網站範例、課程、發布 2.0.0 — 網站範例與課程完成，發布由使用者做。
+- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1 — **完成**；5. 網站範例、課程、發布 2.0.0 — 網站範例與課程完成，發布由使用者做。之後：資料放前端或後端（`@local`，doc/storage.md）— **完成**。
 
 ## 後端服務（v2.0 第 3 步）
 
@@ -81,6 +81,16 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - `libsys::store::is_wasi`（前 256 KiB 有 `wasi_snapshot_preview1`）→ `Store::spawn_module` 改啟動 `wasi`。shell 執行程式時：`/bin/NAME`，否則同名的映像（store 會從 registry 拉）；WASI 程式另外拿到 shell 的 `fs`（新 client）與 `PWD`。程式的輸入是管線 / 檔案，或輸出要接下去（管線、`>`、`$(…)`：`Sh.piped_out`）時，console 是 shell 自己服務的（`serve_console`：WRITE 收進輸出、READ_LINE 給一行，沒了回 EOF），所以 `coreutils sort f | coreutils head` 可以。
 - WASI 程式：`wasi-programs/`（各自獨立的 crate，`[workspace]`，`wasm32-wasip1`；`wasi-hello` 放進 root 映像的 `/bin`）；uutils coreutils 0.12（crates.io，`cargo install … --features feat_wasm`，快取在 `target/wasi-tools`）10 MB，是只在 registry（`build/store`）的映像 `coreutils`，不放進 boot pack。store 拉大物件：先 `OBJ_SIZE`（新的 remote op 49）再 `try_reserve_exact`，大於 1 MiB 的不寫進磁碟日誌（下次開機再拉）——曾因每次加倍與多份複製在 64 MiB 的 store 裡 OOM、整個 store 掛掉。C 程式（sqlite3、Lua）要 wasi-sdk，這台機器沒有。
 - 測試 `tests/m25.expect`。
+
+## 資料放在前端或後端（`@local`，doc/storage.md）
+
+- 核心的 remote channel 2 = 這台機器自己的儲存（`web/local_store.js`：key → bytes，`GET`/`PUT`/`DELETE`/`LIST prefix after`（分頁）；瀏覽器 IndexedDB `ruos-local-MACHINE`，Node 測試是 `build/local/MACHINE/` 的檔案，檔名是 key 的 hex）。只有在有 server 時才給（init 依順序分辨 handle 3 server、4 ingress、5 storage）。
+- `services/local`（init 啟動；shell 與 kube 各有一個 `local` client，`libsys::local`：`connect KIND:NAME` + channel → `ok`/`error`，`dup`，`ls`）：`fs:ROOT`（`files.rs`：fs 協定，`m ROOT PATH` 記 `file SIZE`/`dir`，`c ROOT N PATH` 是 32 KiB 區塊，樹放記憶體，區塊快取 128 個）、`kv:NAME`（`kv.rs`，kube 的 kv 協定，`k NAME HEX`）、`redis:NAME`（`cache.rs`：store 的 REDIS 請求，自己寫的小 Redis，每次修改整份寫進 `cache` 樹的 `/NAME`；到期用牆上時鐘）、`sql:NAME`（`sql.rs`：store 的 SQL 請求，交給每個資料庫一個的 `sqlited`）。一條 channel 只能用自己的名字。事件驅動：等 sqlited 回答時照樣服務它的 fs。
+- `wasi-programs/sqlited`：rusqlite（bundled）以 wasi-sdk 編（`run.sh` 的 `WASI_SDK`，預設 `~/opt/wasi-sdk-34.0-arm64-macos`；`CC_wasm32_wasip1`、`CFLAGS --sysroot`，用完整路徑連結 `libwasi-emulated-{mman,getpid,signal,process-clocks}.a`：不能用 `-L` 指到 wasi-sdk 的 sysroot，會和 Rust 自帶的 crt1 / libc 混在一起）；`unix-none` VFS（沒有檔案鎖）。stdin 一行 JSON 請求，stdout 一行 `{"ok"}`/`{"err"}`，回答格式與 backend.rs 相同。映像只在 registry（`build/extra`）。console 的 `read_line` 現在可以收超過 256 bytes 的行（served console），WASI 轉接層的 stdin 一次收到 64 KiB。
+- `wasi-programs/sqlite3`：SQLite 官方 shell（amalgamation 在 `SQLITE_SRC`，預設 `~/opt/sqlite-src/sqlite-amalgamation-3540100`，不放進 repo；`nosystem.c` 補 `system()`），`run.sh` 直接用 wasi-sdk 的 clang 編（`-DSQLITE_OMIT_WAL -DSQLITE_OMIT_POPEN …`，這裡用 wasi-sdk 自己的 libc，所以可以 `-l`）。shell 給 WASI 程式 `HOME=/`（不然 sqlite3 警告找不到家目錄）。
+- 名字 `X@local`：kube 的 `uses`（`check_use` 接受 kv/sql/redis 加 `@local`；`bindings` 向 local 要 channel，放進名稱空間的名字去掉 `@local`）、shell 的 `sql -d`、`redis -d`、`kv … NS@local`、`run IMAGE sql:X@local`、`local`（列出）。
+- store：映像的程式物件不在（大於 1 MiB 的不寫進磁碟日誌）時 `GET` 會重新 pull、`OBJ_MEM` 會補抓物件——之前第二次開機後 coreutils / sqlited 會「找得到映像卻啟動不了」。
+- 測試 `tests/m27.expect`（第一次開機；`lguest` = 同一個 guestbook 程式加 `sql:guestbook@local`，資料和後端的分開）、`tests/boot2.expect`（第二次開機讀回 redis、kv、sql）。
 
 ## 網站範例（v2.0 第 5 步）
 
@@ -183,7 +193,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 
 ## 多執行緒（M8）
 
-- 每個 thread 是自己 Worker 裡的一個 instance，本來就平行跑；ktest 讓 4 個 thread 做同一份工作，要比一個 thread 做 4 倍快 1.5 倍以上（`M8 OK`）。console 的預先輸入上限 256 行（測試腳本一次送完；超過的行會被丟掉，腳本就停住、等到逾時），行緩衝放在 static。
+- 每個 thread 是自己 Worker 裡的一個 instance，本來就平行跑；ktest 讓 4 個 thread 做同一份工作，要比一個 thread 做 4 倍快 1.5 倍以上（`M8 OK`）。console 的預先輸入上限 1024 行（測試腳本一次送完；超過的行會被丟掉，腳本就停住、等到逾時：曾在腳本長到 258 行時發生），行緩衝放在 static。
 
 ## 補強（M9）
 

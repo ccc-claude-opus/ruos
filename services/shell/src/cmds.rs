@@ -52,6 +52,9 @@ kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
 後端的資料庫（在桌機的 ruos serve：SQLite、PostgreSQL、Redis）
   sql [-d DB] \"SELECT …\"（預設 DB 是 app；也可以接管線：cat x.sql | sql）
   redis [-d NAME] COMMAND ARGS...（預設 NAME 是 cache；要 ruos serve --redis cache=redis://…）
+  名字加上 @local（sql -d app@local、redis -d cache@local、kv get notes@local K、run snoop sql:app@local）：
+    資料放在這台機器（瀏覽器的 IndexedDB），不在伺服器；程式拿到的名字一樣，分不出來
+  local                 這台機器自己存了什麼（kv、redis、sql）
 網路（由 server 代為連線；要有 http 這個 capability）
   curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL
 ";
@@ -305,6 +308,8 @@ impl Sh {
                 ns = ns.add("fs", f.0.0);
             }
             env.push((String::from("PWD"), self.cwd.clone()));
+            // `/` is the top of what it can see (its preopen is the current directory).
+            env.push((String::from("HOME"), String::from("/")));
         }
         let ns = libsys::args::add(ns, &args, &env).map_err(err("args"))?;
         let name = path.rsplit('/').next().unwrap_or(&path);
@@ -645,6 +650,10 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
         "kv" => sh.kv(&argv[1..]),
         "sql" => sh.sql(&argv[1..], input),
         "redis" => sh.redis(&argv[1..]),
+        "local" => match sh.local {
+            Some(l) => l.list().map(String::into_bytes).map_err(err("local")),
+            None => Err(String::from("this machine keeps nothing itself (no local storage)")),
+        },
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -738,9 +747,12 @@ fn run_image(sh: &Sh, argv: &[String]) {
             }),
             "store" => sh.store.connect().ok().map(|s| s.0.0),
             "fs" => sh.fs.and_then(|fs| fs.connect().ok()).map(|f| f.0.0),
+            n if n.ends_with("@local") => sh.local.and_then(|l| l.connect(&n[..n.len() - 6]).ok()).map(|c| c.0),
             n if n == "http" || n.starts_with("sql:") || n.starts_with("redis:") => sh.backend.and_then(|b| b.grant(&[n]).ok()).map(|s| s.0.0),
             n => ns::get(n).and_then(|h| h.dup(Rights::ALL).ok()),
         };
+        // `sql:app@local` is `sql:app` to the program: it cannot tell where the data is.
+        let n = n.strip_suffix("@local").unwrap_or(n);
         match h {
             Some(h) => give = give.add(n, h),
             None => return cprintln!(sh.con, "run: the shell has no {}", n),
@@ -853,15 +865,32 @@ impl Sh {
         }
     }
 
-    /// sql [-d DB] STATEMENT: a database of the backend, as a text table.
+    /// Where `kind:name` is: the backend, or this machine's `local` service
+    /// for `name@local` (a channel of its own, closed by the caller).
+    fn place(&self, kind: &str, name: &str) -> Result<(libsys::store::Store, String, bool), String> {
+        match name.strip_suffix("@local") {
+            Some(base) => {
+                let l = self.local.ok_or("this machine keeps nothing itself (no local storage)")?;
+                Ok((libsys::store::Store(l.connect(&format!("{kind}:{base}"))?), String::from(base), true))
+            }
+            None => Ok((self.backend.clone().ok_or("this shell has no backend")?, String::from(name), false)),
+        }
+    }
+
+    /// sql [-d DB] STATEMENT: a database of the backend (`DB@local`: of
+    /// this machine), as a text table.
     fn sql(&mut self, argv: &[String], input: Option<Vec<u8>>) -> Out {
         let (db, rest) = Self::backend_args(argv, "app");
         let stmt = if rest.is_empty() { text(&input.unwrap_or_default()) } else { rest.join(" ") };
         if stmt.trim().is_empty() {
-            return Err(String::from("sql [-d DB] \"STATEMENT\" (or SQL on the input)"));
+            return Err(String::from("sql [-d DB[@local]] \"STATEMENT\" (or SQL on the input)"));
         }
-        let b = self.backend.clone().ok_or("this shell has no backend")?;
-        match libsys::sql::Sql::with(b, db).query_text(&stmt).map_err(err("sql"))? {
+        let (b, db, own) = self.place("sql", db)?;
+        let r = libsys::sql::Sql::with(b.clone(), &db).query_text(&stmt);
+        if own {
+            let _ = b.0.close();
+        }
+        match r.map_err(err("sql"))? {
             Ok(t) => Ok(t.into_bytes()),
             Err(why) => {
                 self.status = 1;
@@ -870,15 +899,20 @@ impl Sh {
         }
     }
 
-    /// redis [-d NAME] COMMAND ARGS…: a Redis of the backend.
+    /// redis [-d NAME] COMMAND ARGS…: a Redis of the backend (`NAME@local`:
+    /// the small one this machine keeps).
     fn redis(&mut self, argv: &[String]) -> Out {
         let (name, rest) = Self::backend_args(argv, "cache");
         if rest.is_empty() {
-            return Err(String::from("redis [-d NAME] COMMAND ARGS..."));
+            return Err(String::from("redis [-d NAME[@local]] COMMAND ARGS..."));
         }
-        let b = self.backend.clone().ok_or("this shell has no backend")?;
+        let (b, name, own) = self.place("redis", name)?;
         let args: Vec<&str> = rest.iter().map(String::as_str).collect();
-        match libsys::redis::Redis::with(b, name).cmd_text(&args).map_err(err("redis"))? {
+        let r = libsys::redis::Redis::with(b.clone(), &name).cmd_text(&args);
+        if own {
+            let _ = b.0.close();
+        }
+        match r.map_err(err("redis"))? {
             Ok(t) => Ok(t.into_bytes()),
             Err(why) => {
                 self.status = 1;
@@ -889,9 +923,12 @@ impl Sh {
 
     /// kv ls|get|put|rm NS …: a KV namespace (the shell asks kube for it).
     fn kv(&mut self, argv: &[String]) -> Out {
-        let usage = "kv ls NS [PREFIX] | kv get NS KEY | kv put NS KEY VALUE... | kv rm NS KEY";
+        let usage = "kv ls NS [PREFIX] | kv get NS KEY | kv put NS KEY VALUE... | kv rm NS KEY (NS@local: kept by this machine)";
         let [op, ns, rest @ ..] = argv else { return Err(String::from(usage)) };
-        let kv = libsys::kv::Kv(self.kube_connect(&format!("kv:{ns}"))?);
+        let kv = libsys::kv::Kv(match ns.strip_suffix("@local") {
+            Some(base) => self.local.ok_or("this machine keeps nothing itself (no local storage)")?.connect(&format!("kv:{base}"))?,
+            None => self.kube_connect(&format!("kv:{ns}"))?,
+        });
         let r = match (op.as_str(), rest) {
             ("ls", p) => kv.list(p.first().map_or("", String::as_str)).map(|ks| lines_out(ks)),
             ("get", [k]) => kv.get(k).map(|v| format!("{v}\n").into_bytes()),
@@ -1102,7 +1139,7 @@ const BUILTINS: &[&str] = &[
     "help", "echo", "pwd", "cd", "ls", "cat", "tree", "stat", "mkdir", "rmdir", "rm", "cp", "mv", "touch", "save", "head", "tail", "wc",
     "grep", "sort", "uniq", "cut", "tr", "sed", "seq", "tee", "basename", "dirname", "printf", "env", "set", "export", "unset", "read",
     "find", "rev", "tac", "nl", "which", "type", "sh", ".", "source", "test", "[", "true", "false", "date", "uptime", "clear", "history",
-    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl", "fn", "kv", "sql", "redis",
+    "sleep", "ps", "kill", "exit", "handles", "ns", "run", "mem", "images", "image", "dock", "kube", "curl", "fn", "kv", "sql", "redis", "local",
 ];
 
 /// test / [ : -e -f -d -s -z -n, = !=, -eq -ne -lt -le -gt -ge, !.

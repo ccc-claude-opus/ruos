@@ -294,14 +294,15 @@ pub fn shutdown(code: u32) -> ! {
     core::arch::wasm32::unreachable()
 }
 
-/// The host's channels to the server: 0 = the server connection (the
-/// store asks, the server answers), 1 = ingress (the server sends requests
-/// from outside, kube answers).
-static REMOTE: crate::sync::IrqLock<[Option<alloc::sync::Arc<crate::channel::Channel>>; 2]> = crate::sync::IrqLock::new([None, None]);
+/// The host's channels: 0 = the server connection (the store asks, the
+/// server answers), 1 = ingress (the server sends requests from outside,
+/// kube answers), 2 = this machine's own storage in the browser (the local
+/// service asks; web/local_store.js).
+static REMOTE: crate::sync::IrqLock<[Option<alloc::sync::Arc<crate::channel::Channel>>; 3]> = crate::sync::IrqLock::new([None, None, None]);
 
 /// Remote channel `i`, if the host has it (given to init).
 pub fn remote_channel(i: u8) -> Option<alloc::sync::Arc<crate::channel::Channel>> {
-    if i > 1 || unsafe { host::remote_open(i as u32) } == 0 {
+    if i > 2 || unsafe { host::remote_open(i as u32) } == 0 {
         return None;
     }
     Some(REMOTE.lock()[i as usize].get_or_insert_with(|| crate::channel::Channel::remote(i)).clone())

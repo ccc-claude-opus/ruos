@@ -9,7 +9,9 @@
 //! What a program `uses` becomes a name in its namespace: a service X
 //! `svc:X`, a Function `fn:X`, a KV namespace `kv:X` (the kubelet keeps the
 //! other end of each); `http`, `sql:X` and `redis:X` are parts of the
-//! backend (a store client granted only that, from kube's `backend`).
+//! backend (a store client granted only that, from kube's `backend`);
+//! `kv:X@local`, `sql:X@local` and `redis:X@local` come from this machine's
+//! `local` service, under the name without `@local`.
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -131,6 +133,8 @@ pub struct Kubelet {
     pub(crate) links: Vec<Option<(Channel, Bind)>>,
     /// kube's `backend`: programs get parts of it (`Store::grant`).
     pub(crate) backend: Option<Store>,
+    /// This machine's own storage (`…@local` in `uses`).
+    pub(crate) local: Option<libsys::local::Local>,
     /// This node's Function instances, and what each Function did here.
     pub(crate) insts: Vec<crate::funcs::Inst>,
     pub(crate) fns: Vec<crate::funcs::FnStat>,
@@ -173,7 +177,7 @@ pub fn revision(api: &Api, d: &str, rev: u32) -> Option<(String, Template)> {
 }
 
 impl Kubelet {
-    pub fn new(port: Port, dock: Dock, backend: Option<Store>) -> Kubelet {
+    pub fn new(port: Port, dock: Dock, backend: Option<Store>, local: Option<libsys::local::Local>) -> Kubelet {
         Kubelet {
             port,
             dock,
@@ -181,6 +185,7 @@ impl Kubelet {
             listens: Vec::new(),
             links: Vec::new(),
             backend,
+            local,
             insts: Vec::new(),
             fns: Vec::new(),
             fn_next: 0,
@@ -200,6 +205,14 @@ impl Kubelet {
     pub(crate) fn bindings(&mut self, uses: &[String]) -> (String, Vec<Handle>, Vec<usize>) {
         let (mut cmd, mut handles, mut links) = (String::new(), Vec::new(), Vec::new());
         for u in uses {
+            // Kept by this machine: the local service serves the program directly.
+            if let Some(base) = u.strip_suffix("@local") {
+                if let Some(c) = self.local.and_then(|l| l.connect(base).ok()) {
+                    cmd += &format!(" --handle {base}");
+                    handles.push(c.0);
+                }
+                continue;
+            }
             if u == "http" || u.starts_with("sql:") || u.starts_with("redis:") {
                 if let Some(s) = self.backend.and_then(|b| b.grant(&[u.as_str()]).ok()) {
                     cmd += &format!(" --handle {u}");

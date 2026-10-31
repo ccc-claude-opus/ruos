@@ -42,6 +42,8 @@ pub struct Sh {
     pub http: Option<Http>,
     /// All of the backend: programs get parts of it (`run IMAGE sql:app`).
     pub backend: Option<Store>,
+    /// This machine's own storage (`…@local`: `sql -d app@local`).
+    pub local: Option<libsys::local::Local>,
     pub fs: Option<Fs>,
     /// Keeps the overlay alive.
     _ctl: Option<Channel>,
@@ -137,6 +139,7 @@ fn main(_arg: usize) -> i64 {
         kube: ns::get("kube").map(|k| Kube(Channel(k))),
         http: Http::get(),
         backend: ns::get("backend").map(|h| Store(Channel(h))),
+        local: libsys::local::Local::get(),
         fs,
         _ctl: ctl,
         cwd: String::from("/home"),

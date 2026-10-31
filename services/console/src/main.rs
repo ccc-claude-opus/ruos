@@ -14,7 +14,7 @@ libsys::entry!(main);
 
 const MAX_CLIENTS: usize = 16;
 /// Lines typed ahead (test scripts send all of theirs at once).
-const MAX_LINES: usize = 256;
+const MAX_LINES: usize = 1024;
 const SERIAL_KEY: u64 = 1000;
 
 /// Columns a character takes on a terminal (wide East Asian ones: 2).

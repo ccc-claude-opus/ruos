@@ -2,4 +2,9 @@ images
 dock run snap
 dock run greeter
 cat /home/note.txt | wc
+local
+redis -d c@local GET greeting
+redis -d c@local LRANGE l 0 -1
+kv get notes@local k1
+sql -d app@local "SELECT who FROM t ORDER BY id"
 exit

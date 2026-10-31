@@ -28,6 +28,7 @@ mod heap;
 pub mod ipc;
 pub mod kube;
 pub mod kv;
+pub mod local;
 pub mod ns;
 pub mod redis;
 pub mod sql;

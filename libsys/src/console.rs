@@ -31,10 +31,13 @@ impl Console {
         Ok(())
     }
 
-    /// Reads one line into `buf`; returns its length.
+    /// Reads one line into `buf`; returns its length. The console's lines
+    /// are at most MAX_LINE bytes; a console a program serves (the shell's
+    /// for a pipe, the local service's for SQLite) may send longer ones,
+    /// up to `buf.len()`.
     pub fn read_line(&self, buf: &mut [u8]) -> Result<usize> {
         self.0.write(&[READ_LINE], &[])?;
-        let mut m = [0u8; 1 + MAX_LINE];
+        let mut m = alloc::vec![0u8; 1 + buf.len().max(MAX_LINE)];
         let (n, _) = self.0.recv(&mut m, &mut [])?;
         if m[0] == EOF {
             return Err(crate::Error::PeerClosed);

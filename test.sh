@@ -90,7 +90,7 @@ if printf '%s\n' "${platforms[@]}" | grep -qx wasm; then
     ./run.sh build || failed+=(wasm)
 fi
 cargo build --release --quiet -p ruos -p podimg
-rm -rf build/store/pods build/store/disks build/store/cluster build/store/sql
+rm -rf build/store/pods build/store/disks build/store/cluster build/store/sql build/local
 
 for p in "${platforms[@]}"; do
     printf '%s\n' "${failed[@]:-}" | grep -qx "$p" && continue

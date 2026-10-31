@@ -1,0 +1,7 @@
+# local: this machine's own storage (in the browser): files, KV namespaces,
+# Redis-like caches and SQLite databases (doc/storage.md).
+name = "local"
+entry = "/bin/local"
+
+[programs]
+"/bin/local" = "local"

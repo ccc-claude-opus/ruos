@@ -1,0 +1,32 @@
+^init: started local$
+^OK$
+^1$
+^2$
+^1\) a$
+^3\) c$
+^1\) name$
+^2\) ann$
+^\(nil\)$
+^0$
+^redis: WRONGTYPE: Operation against a key holding the wrong kind of value$
+^hello there$
+^k1$
+^store: pulled sqlited \([0-9]+ objects\)$
+^2 row\(s\)$
+^bob +5$
+^ann +3$
+^c$
+^sql: no such table: nope$
+^snoop: my names: console, sql:app$
+^snoop: sql:app answered \{"columns":\["answer"\],"rows":\[\[42\]\]\}$
+^sql: cannot keep sql:No here
+^kv notes$
+^redis c [0-9]+$
+^sql app [0-9]+$
+^apps: lguest post 200 id=1$
+^apps: lguest notes cy:kept in the browser$
+^cy +kept in the browser$
+^store: pulled sqlite3 \([0-9]+ objects\)$
+^│ b +│ +8 │$
+^15$
+^music\.db$

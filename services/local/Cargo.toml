@@ -1,0 +1,14 @@
+[package]
+name = "local"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "local"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }

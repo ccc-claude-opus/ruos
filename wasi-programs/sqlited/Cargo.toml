@@ -1,0 +1,19 @@
+[package]
+name = "sqlited"
+version = "0.1.0"
+edition = "2024"
+
+# SQLite for ruos' local databases (`sql:NAME@local`): a WASI program the
+# local service runs, a request a line on stdin, an answer a line on stdout.
+# Built with wasi-sdk (run.sh: WASI_SDK).
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[workspace]

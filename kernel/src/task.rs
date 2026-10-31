@@ -299,6 +299,10 @@ pub fn start_init() {
         crate::println!("task: ingress from the server for init (handle 4)");
         handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
     }
+    if let Some(r) = arch::remote_channel(2) {
+        crate::println!("task: local storage for init (handle 5)");
+        handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
+    }
     crate::println!("task: root quota {} MiB", root.info().mem_limit >> 20);
     match spawn("init", init, handles, &root) {
         Ok(t) => crate::println!("task: started init (task {})", t.id),

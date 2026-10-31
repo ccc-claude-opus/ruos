@@ -7,3 +7,12 @@
 ^init exited \(0\)$
 ^writer: motd: Hello from dock build$
 ^      2       2      12$
+^kv notes$
+^redis c [0-9]+$
+^sql app [0-9]+$
+^hello$
+^3\) c$
+^hello there$
+^who$
+^ann$
+^bob$
