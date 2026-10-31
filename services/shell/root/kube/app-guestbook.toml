@@ -1,0 +1,7 @@
+# 網站範例：留言板。資料在後端的資料庫 sql:guestbook（ruos serve 的
+# STORE/sql/guestbook.db），只有這個函式拿得到。kube get fn 列出網址。
+kind = "Function"
+name = "guestbook"
+image = "guestbook"
+expose = true
+uses = ["sql:guestbook"]

@@ -121,7 +121,7 @@ kube logs front-2
 kube rollout history front
 kube rollout undo front
 kube apply kube/stuck.toml
-sleep 12
+sleep 15
 kube describe stuck | grep Liveness
 kube describe stuck | grep Restarted
 kube delete stuck
@@ -193,6 +193,22 @@ redis RPUSH list a b c
 redis LRANGE list 0 -1
 redis GET nothing
 redis -d nosuch PING
+kube apply kube/app-guestbook.toml kube/app-todo.toml kube/app-wiki.toml kube/app-short.toml
+cat kube/app-weather.toml > /tmp/weather.toml
+echo 'args = ["http://127.0.0.1:@HTTP_PORT@"]' >> /tmp/weather.toml
+kube apply /tmp/weather.toml
+echo apps-test: go
+sleep 25
+sql -d guestbook "SELECT name, text FROM notes"
+sql -d todo "SELECT title, done FROM todos"
+sql -d wiki "SELECT name, revisions FROM pages"
+sql -d short "SELECT url, hits FROM links"
+sql -d weather "SELECT city, temperature, wind FROM cache"
+kube delete guestbook
+kube delete todo
+kube delete wiki
+kube delete short
+kube delete weather
 wasi-hello one two
 wasi-hello write notes.txt
 cat notes.txt

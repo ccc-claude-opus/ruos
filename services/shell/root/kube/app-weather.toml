@@ -1,0 +1,8 @@
+# 網站範例：天氣。函式經 http 問 Open-Meteo，結果在 sql:weather 存 10 分鐘
+# （哪一個 instance 回答都一樣）。args 可以換掉服務的位址。
+kind = "Function"
+name = "weather"
+image = "weather"
+expose = true
+timeout = 15
+uses = ["http", "sql:weather"]

@@ -109,6 +109,7 @@ let out = '';
 let typed = false;
 let snapshotLine = 'snapshot: none';
 let ingressTested = false;
+let appsTested = false;
 const timeout = setTimeout(() => fail('timeout'), Number(process.env.BOOT_TIMEOUT_MS ?? 600000));
 worker.on('message', (m) => {
   if (m.type === 'out') {
@@ -125,6 +126,10 @@ worker.on('message', (m) => {
     if (!ingressTested && fnBase && /^ingress-test: go$/m.test(out)) {
       ingressTested = true;
       ingressTest().catch((e) => console.log(`ingress: failed: ${e.message}`));
+    }
+    if (!appsTested && fnBase && /^apps-test: go$/m.test(out)) {
+      appsTested = true;
+      appsTest().catch((e) => console.log(`apps: failed: ${e.message}`));
     }
   } else if (m.type === 'snapshot') {
     // The page's system view: the shell's channels lead to console, store and dock.
@@ -188,6 +193,73 @@ async function ingressTest() {
     Origin: 'http://evil.example', Connection: 'Upgrade', Upgrade: 'websocket',
     'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
   })}`);
+  say('done');
+}
+
+// The example web sites (apps/webapps), from outside like a browser, as
+// `apps: …` lines for tests/m26.expect.
+async function appsTest() {
+  const say = (s) => console.log(`apps: ${s}`);
+  const call = async (method, p, body) => {
+    const r = await fetch(`${fnBase}/fn/${p}`, {
+      method, redirect: 'manual',
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const t = await r.text();
+    let j = null;
+    try { j = JSON.parse(t); } catch {}
+    return { status: r.status, j, t, r };
+  };
+  let r = await call('GET', 'guestbook/');
+  say(`guestbook page ${r.status} ${r.t.includes('<h1>留言板</h1>') ? 'has title' : 'no title'}`);
+  r = await call('POST', 'guestbook/api/notes', { name: 'ann', text: 'hi <b>there</b>' });
+  say(`guestbook post ${r.status} id=${r.j?.id}`);
+  await call('POST', 'guestbook/api/notes', { name: 'bob', text: '你好' });
+  r = await call('POST', 'guestbook/api/notes', { name: '', text: 'x' });
+  say(`guestbook bad ${r.status} ${r.j?.error}`);
+  r = await call('GET', 'guestbook/api/notes');
+  say(`guestbook notes ${r.j.map((n) => `${n.name}:${n.text}`).join(' | ')}`);
+
+  await call('POST', 'todo/api/todos', { title: 'read lesson 17' });
+  await call('POST', 'todo/api/todos', { title: 'write a site' });
+  await call('POST', 'todo/api/todos', { title: 'nothing' });
+  r = await call('POST', 'todo/api/todos/1', { done: true });
+  say(`todo done ${r.status} changed=${r.j?.changed}`);
+  await call('DELETE', 'todo/api/todos/3');
+  r = await call('GET', 'todo/api/todos');
+  say(`todo list ${r.j.map((t) => `${t.title}=${t.done}`).join(', ')}`);
+
+  await call('PUT', `wiki/api/page?name=${encodeURIComponent('首頁')}`, { body: '# hi\nsee [[ruos]]' });
+  await call('PUT', `wiki/api/page?name=${encodeURIComponent('首頁')}`, { body: '# hello\nsee [[ruos]]' });
+  await call('PUT', 'wiki/api/page?name=ruos', { body: 'a teaching OS' });
+  r = await call('GET', `wiki/api/page?name=${encodeURIComponent('首頁')}`);
+  say(`wiki page ${r.status} revisions=${r.j?.revisions} ${JSON.stringify(r.j?.body)}`);
+  r = await call('GET', 'wiki/api/page?name=nope');
+  say(`wiki missing ${r.status}`);
+  r = await call('GET', 'wiki/api/pages');
+  say(`wiki pages ${r.j.map((p) => p.name).sort().join(' ')}`);
+
+  r = await call('POST', 'short/api/links', { url: 'https://example.com/a?b=1' });
+  const code = r.j?.code;
+  say(`short made ${r.status} ${/^[a-zA-Z0-9]{6}$/.test(code) ? 'a 6-letter code' : code}`);
+  r = await call('POST', 'short/api/links', { url: 'https://example.com/a?b=1' });
+  say(`short again ${r.j?.code === code ? 'same code' : 'another code'}`);
+  r = await call('GET', `short/s/${code}`);
+  say(`short go ${r.status} ${r.r.headers.get('location')}`);
+  r = await call('POST', 'short/api/links', { url: 'javascript:alert(1)' });
+  say(`short bad ${r.status}`);
+  r = await call('GET', 'short/s/zzzzzz');
+  say(`short none ${r.status}`);
+
+  r = await call('GET', 'weather/api/cities');
+  say(`weather cities ${r.j.length}`);
+  for (let i = 0; i < 2; i++) {
+    r = await call('GET', 'weather/api/weather?city=kinmen');
+    say(`weather ${r.status} ${r.j?.city} ${r.j?.temperature} ${r.j?.wind} cached=${r.j?.cached}`);
+  }
+  r = await call('GET', 'weather/api/weather?city=atlantis');
+  say(`weather none ${r.status}`);
   say('done');
 }
 

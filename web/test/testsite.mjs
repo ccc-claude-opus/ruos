@@ -16,6 +16,9 @@ export function testSite() {
       };
       if (req.url === '/hello') send(200, 'hello from the test web server\n');
       else if (req.url === '/echo') send(200, `got ${req.method} ${body}\n`);
+      // A stand-in for Open-Meteo (the weather example).
+      else if (req.url.startsWith('/v1/forecast?'))
+        send(200, JSON.stringify({ current: { time: '2026-11-01T12:00', temperature_2m: 21.5, wind_speed_10m: 7.2 } }), { 'Content-Type': 'application/json' });
       else if (req.url === '/big') send(200, Array.from({ length: 20000 }, (_, i) => `line ${i + 1}\n`).join(''));
       // A redirect to the server's own machine: refused like a direct request.
       else if (req.url === '/redirect') send(302, '', { Location: 'http://127.0.0.1:1/' });

@@ -2039,6 +2039,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "webapps"
+version = "0.1.0"
+dependencies = [
+ "libsys",
+ "serde_json",
+]
+
+[[package]]
 name = "webpki-roots"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

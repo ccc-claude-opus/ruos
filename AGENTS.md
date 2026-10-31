@@ -64,7 +64,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
   21. `curl`：server 代為發出 HTTP 請求（擋住 server 自己的網路），`http` capability — **完成**
   22. serverless：kube 的 `kind = "Function"`（在呼叫的節點上冷啟動、重用、縮到 0、timeout）、KV namespace（`kv:NAME`）— **完成**（設計：`doc/serverless.md`）
   23. 函式的對外入口：ruos serve 的函式埠 `/fn/NAME/…`、`expose = true`、送到有熱 instance 的機器、HTTP 封包與 `serve_http` — **完成**（設計：`doc/ingress.md`）
-- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1 — **完成**；5. 網站範例、課程、發布 2.0.0。
+- **v2.0**（`doc/v2.md`）：1. 清理（拿掉 RISC-V、ARM、裝置、QEMU、wasmrt）— **完成**；2. ruos serve 改 tokio（axum；ingress 改回 WebSocket）— **完成**；3. 後端服務是 capability（`sql:NAME`、`redis:NAME`）— **完成**；4. 前端 WASI preview1 — **完成**；5. 網站範例、課程、發布 2.0.0 — 網站範例與課程完成，發布由使用者做。
 
 ## 後端服務（v2.0 第 3 步）
 
@@ -81,6 +81,12 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - `libsys::store::is_wasi`（前 256 KiB 有 `wasi_snapshot_preview1`）→ `Store::spawn_module` 改啟動 `wasi`。shell 執行程式時：`/bin/NAME`，否則同名的映像（store 會從 registry 拉）；WASI 程式另外拿到 shell 的 `fs`（新 client）與 `PWD`。程式的輸入是管線 / 檔案，或輸出要接下去（管線、`>`、`$(…)`：`Sh.piped_out`）時，console 是 shell 自己服務的（`serve_console`：WRITE 收進輸出、READ_LINE 給一行，沒了回 EOF），所以 `coreutils sort f | coreutils head` 可以。
 - WASI 程式：`wasi-programs/`（各自獨立的 crate，`[workspace]`，`wasm32-wasip1`；`wasi-hello` 放進 root 映像的 `/bin`）；uutils coreutils 0.12（crates.io，`cargo install … --features feat_wasm`，快取在 `target/wasi-tools`）10 MB，是只在 registry（`build/store`）的映像 `coreutils`，不放進 boot pack。store 拉大物件：先 `OBJ_SIZE`（新的 remote op 49）再 `try_reserve_exact`，大於 1 MiB 的不寫進磁碟日誌（下次開機再拉）——曾因每次加倍與多份複製在 64 MiB 的 store 裡 OOM、整個 store 掛掉。C 程式（sqlite3、Lua）要 wasi-sdk，這台機器沒有。
 - 測試 `tests/m25.expect`。
+
+## 網站範例（v2.0 第 5 步）
+
+- `apps/webapps`：一個 package、五個 bin（`guestbook`、`todo`、`wiki`、`short`、`weather`；`run.sh` 的 `WEB_APPS`），共用的 `lib.rs`：`Db`（`sql:NAME`，`rows` 把 `{columns, rows}` 轉成物件陣列）、`body` / `field` / `param`（%-decode）、`answer` / `error`（JSON `{"error"}`）、`page`（共用的 HTML 外框 + JS 的 `api()` / `esc()`）。JSON 用 `serde_json`（no_std + alloc）。網頁在瀏覽器裡由 JS 依 JSON API 畫；程式啟動時 `CREATE TABLE IF NOT EXISTS`。字串常數用 `r##"…"##`（HTML 裡有 `"#`）。
+- 每個網站一個 `Podfile.NAME.toml`，建進 `build/extra`（只在 registry，連同 coreutils；`build/store` 與 `dist` 都會複製進去），不放 boot pack：第一次用時 store 從 registry 拉。manifest 在 `services/shell/root/kube/app-*.toml`（`expose = true`、`uses = ["sql:NAME"]`；weather 另有 `http`、`timeout = 15`，`args` 第一個可以換掉 Open-Meteo 的位址）。
+- 測試：腳本 `kube apply` 五個（weather 的 args 指向 testsite 的假 `/v1/forecast`），印 `apps-test: go`，`boot.mjs` 的 `appsTest` 從函式埠打 API（`apps: …` 行），再由 shell 的 `sql -d` 看資料庫；`tests/m26.expect`。
 
 ## kube（M17）
 

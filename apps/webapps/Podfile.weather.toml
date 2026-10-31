@@ -1,0 +1,6 @@
+# weather: an example web site, 天氣（http + sql:weather 當快取）. kube/app-weather.toml runs it.
+name = "weather"
+entry = "/bin/weather"
+
+[programs]
+"/bin/weather" = "weather"

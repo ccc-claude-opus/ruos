@@ -1,0 +1,6 @@
+# short: an example web site, 短網址（sql:short）. kube/app-short.toml runs it.
+name = "short"
+entry = "/bin/short"
+
+[programs]
+"/bin/short" = "short"

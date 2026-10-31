@@ -1,0 +1,7 @@
+# 網站範例：wiki（每次修改都留下一版）。資料在後端的資料庫 sql:wiki（ruos serve 的
+# STORE/sql/wiki.db），只有這個函式拿得到。kube get fn 列出網址。
+kind = "Function"
+name = "wiki"
+image = "wiki"
+expose = true
+uses = ["sql:wiki"]

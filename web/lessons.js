@@ -249,6 +249,24 @@ export const LESSONS = [
       { cmd: 'cd /; coreutils ls; cd /home', note: '從 / 開始，它就看得到全部' },
     ],
   },
+  {
+    title: '17. 網站範例：資料在後端',
+    text: [
+      '五個小網站，都是 kube 的 Function（`expose = true`），資料放在後端（ruos serve）的 SQLite：留言板、待辦清單、wiki、短網址、天氣。函式本身沒有狀態，instance 隨時會被收掉、換一台機器；資料在 `sql:NAME` 這個 capability 後面，manifest 的 `uses` 列了它，函式才拿得到。',
+      '網頁由函式回給瀏覽器，畫面在瀏覽器裡由 JavaScript 依 JSON API 畫出來；函式只回答 API、跟資料庫說話（原始碼在 `apps/webapps`）。天氣還用了 `http`：經 server 問 Open-Meteo，結果在資料庫裡存 10 分鐘，所以不管哪個 instance 回答，同一個城市 10 分鐘內只問一次。',
+    ],
+    steps: [
+      { cmd: 'cat kube/app-guestbook.toml', note: 'uses = ["sql:guestbook"]' },
+      { cmd: 'kube apply kube/app-guestbook.toml kube/app-todo.toml kube/app-wiki.toml kube/app-short.toml kube/app-weather.toml', note: '五個網站（映像第一次用時從 registry 拉）' },
+      { cmd: 'kube get fn', note: 'URL 欄：在新分頁打開它們，留言、加待辦、寫 wiki、縮網址' },
+      { cmd: 'sql -d guestbook "SELECT * FROM notes"', note: 'shell 也拿得到這些資料庫：剛才的留言' },
+      { cmd: 'sql -d todo "SELECT * FROM todos"', note: '待辦' },
+      { cmd: 'sql -d wiki "SELECT name, revisions, updated FROM pages"', note: 'wiki 的每一版都留著' },
+      { cmd: 'sql -d short "SELECT * FROM links"', note: '短網址與點擊次數' },
+      { cmd: 'run snoop console sql:guestbook', note: '別的程式要用，也得被給這個 capability' },
+      { cmd: 'kube delete guestbook; kube delete todo; kube delete wiki; kube delete short; kube delete weather', note: '收拾（資料庫還在後端）' },
+    ],
+  },
 ];
 
 export function renderLessons(root, type) {

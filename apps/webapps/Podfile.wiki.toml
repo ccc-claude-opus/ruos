@@ -1,0 +1,6 @@
+# wiki: an example web site, wiki（sql:wiki）. kube/app-wiki.toml runs it.
+name = "wiki"
+entry = "/bin/wiki"
+
+[programs]
+"/bin/wiki" = "wiki"

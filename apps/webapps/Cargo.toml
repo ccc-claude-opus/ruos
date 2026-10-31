@@ -1,0 +1,46 @@
+[package]
+name = "webapps"
+version = "0.1.0"
+edition = "2024"
+
+# Example web sites (Functions with `expose = true`) whose data is in the
+# backend's databases: each binary is one site, each an image
+# (Podfile.NAME.toml).
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "guestbook"
+path = "src/bin/guestbook.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "todo"
+path = "src/bin/todo.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "wiki"
+path = "src/bin/wiki.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "short"
+path = "src/bin/short.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "weather"
+path = "src/bin/weather.rs"
+test = false
+bench = false
+
+[dependencies]
+libsys = { path = "../../libsys" }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }

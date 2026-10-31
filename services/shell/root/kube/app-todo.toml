@@ -1,0 +1,7 @@
+# 網站範例：待辦清單。資料在後端的資料庫 sql:todo（ruos serve 的
+# STORE/sql/todo.db），只有這個函式拿得到。kube get fn 列出網址。
+kind = "Function"
+name = "todo"
+image = "todo"
+expose = true
+uses = ["sql:todo"]

@@ -1,0 +1,7 @@
+# 網站範例：短網址（/s/CODE 轉址）。資料在後端的資料庫 sql:short（ruos serve 的
+# STORE/sql/short.db），只有這個函式拿得到。kube get fn 列出網址。
+kind = "Function"
+name = "short"
+image = "short"
+expose = true
+uses = ["sql:short"]

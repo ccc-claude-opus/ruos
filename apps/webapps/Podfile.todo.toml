@@ -1,0 +1,6 @@
+# todo: an example web site, 待辦清單（sql:todo）. kube/app-todo.toml runs it.
+name = "todo"
+entry = "/bin/todo"
+
+[programs]
+"/bin/todo" = "todo"

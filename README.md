@@ -35,7 +35,7 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 
 ## 課程
 
-網頁右邊有十六課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十七課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -52,6 +52,8 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 1. **上網**：`curl https://example.com | head`、`curl -o`、server 拒絕連內網、`http` 這個 capability
 1. **函式（serverless）**：`kind = "Function"`、`fn call` 的冷 / 熱啟動、閒置縮到 0、timeout、`kv:counter`
 1. **從外面呼叫函式**：`expose = true`、函式埠的網址、請求送到哪台機器、關掉所有分頁就是 503
+1. **現成的程式（WASI）**：`wasi-hello`、`coreutils sort poem.txt | coreutils head -n 2`、程式只看得到目前目錄
+1. **網站範例：資料在後端**：留言板、待辦、wiki、短網址、天氣，資料在 `sql:NAME`，shell 用 `sql -d` 看得到
 
 「叢集」頁畫出 server 上 kube 的記錄：每個節點（機器）一張卡片，列出分到它的 pod 與狀態，下面是 Deployment 與最近的事件。
 
@@ -249,6 +251,26 @@ shell 找程式的順序：內建指令 → `/bin/NAME` → 同名的映像。
 
 **從外面呼叫**：寫了 `expose = true` 的函式，在 ruos serve 的函式埠（預設主埠加 10，例如 `http://127.0.0.1:8790/fn/NAME/`）有網址，`kube get fn` 的 URL 欄和「叢集」頁都會列出來。請求由 server 送進一台機器（已經有 instance 的優先），函式用 `libsys::func::serve_http` 拿到 method、path、query、headers、body。函式埠和 OS 的頁面是不同的 origin，函式的網頁碰不到 OS 的連線。沒有任何機器（分頁）開著時回 503。設計見 [doc/ingress.md](doc/ingress.md)。
 
+### 網站範例（`kube/app-*.toml`）
+
+五個 `expose = true` 的函式（`apps/webapps`，一個 crate 五個程式），資料放在後端的資料庫：
+
+| 網站 | 用到的 capability | 做什麼 |
+|---|---|---|
+| `guestbook` | `sql:guestbook` | 留言板 |
+| `todo` | `sql:todo` | 待辦清單（勾選、刪除） |
+| `wiki` | `sql:wiki` | wiki：`[[頁名]]` 連結，每次儲存都留下一版 |
+| `short` | `sql:short` | 短網址：`/s/CODE` 回 302，記點擊次數 |
+| `weather` | `http`、`sql:weather` | 天氣：經 server 問 Open-Meteo，在資料庫快取 10 分鐘 |
+
+```sh
+kube apply kube/app-guestbook.toml kube/app-todo.toml kube/app-wiki.toml kube/app-short.toml kube/app-weather.toml
+kube get fn                              # URL 欄：在新分頁打開
+sql -d guestbook "SELECT * FROM notes"   # 資料就在後端（STORE/sql/guestbook.db）
+```
+
+網頁由函式回給瀏覽器，畫面由瀏覽器裡的 JavaScript 依 JSON API 畫出；函式只回答 API、跟資料庫說話，本身沒有狀態（instance 會被收掉、搬到別的機器）。這五個映像只放在 registry，第一次用時才拉進機器。
+
 **Service 沒有位址**：`serves = "echo"` 的 pod 是 service echo；`uses = ["echo"]` 的 pod 名稱空間裡才有 `svc:echo`，沒列的就連不到（預設全部拒絕）。連線時 kube 把一條新 channel 的一端交給一個 ready 的 pod，之後兩邊直接談。kube 每 2 s ping 一次，不回應的 pod 不再分到連線，7 s 後重啟。**Config**（`kind = "Config"`，`[files]`、`[env]`）疊成映像上的一層；改了 Config 或範本就會滾動更新：先多一個新 pod，它 ready 了再移除一個舊的。
 
 ```toml
@@ -289,8 +311,9 @@ app = "web"
 | `abi/` | 系統呼叫號碼、錯誤碼、rights（核心與使用者空間共用） |
 | `libsys/` | 使用者空間函式庫：IPC、名稱空間、各服務的 client、映像 |
 | `objstore/` | 物件庫格式與 pack（OS 與主機共用） |
-| `services/` | init、console、shell、store、overlay、dock、kube |
-| `apps/` | snoop、hello、writer、hog、bench、ktest 等 |
+| `services/` | init、console、shell、store、overlay、dock、kube、wasi |
+| `apps/` | snoop、hello、writer、hog、bench、ktest 等；`webapps` 是五個網站範例 |
+| `wasi-programs/` | WASI 程式（`wasm32-wasip1`）：`wasi-hello`，與 uutils coreutils 的映像 |
 | `podimg/` | 主機工具：建映像 |
 | `ruos/` | 發布的套件：`ruos` 指令（後端：registry + 可寫層 + 磁碟 + 叢集記錄 + 網頁），發布時內含預先建好的系統 |
 | `web/` | 網頁：終端機、課程（`lessons.js`）、系統圖（`inspector.js`）、核心 Worker |

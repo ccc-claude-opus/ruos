@@ -1,0 +1,6 @@
+# guestbook: an example web site, 留言板（sql:guestbook）. kube/app-guestbook.toml runs it.
+name = "guestbook"
+entry = "/bin/guestbook"
+
+[programs]
+"/bin/guestbook" = "guestbook"

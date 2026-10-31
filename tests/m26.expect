@@ -1,0 +1,27 @@
+^apps: guestbook page 200 has title
+^apps: guestbook post 200 id=1
+^apps: guestbook bad 400 name \(≤ 40\) and text \(≤ 500\) are needed
+^apps: guestbook notes bob:你好 \| ann:hi <b>there</b>
+^apps: todo done 200 changed=1
+^apps: todo list write a site=0, read lesson 17=1
+^apps: wiki page 200 revisions=2 "# hello\\nsee \[\[ruos\]\]"
+^apps: wiki missing 404
+^apps: wiki pages ruos 首頁
+^apps: short made 200 a 6-letter code
+^apps: short again same code
+^apps: short go 302 https://example.com/a\?b=1
+^apps: short bad 400
+^apps: short none 404
+^apps: weather cities 6
+^apps: weather 200 金門 21.5 7.2 cached=false
+^apps: weather 200 金門 21.5 7.2 cached=true
+^apps: weather none 404
+^apps: done
+^name +text
+^ann +hi <b>there</b>
+^title +done
+^read lesson 17 +1
+^ruos +1
+^url +hits
+^https://example.com/a\?b=1 +1
+^kinmen +21.5 +7.2
