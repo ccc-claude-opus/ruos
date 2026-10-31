@@ -12,4 +12,3 @@ bench = false
 [dependencies]
 libsys = { path = "../../libsys" }
 objstore = { path = "../../objstore" }
-virtio = { path = "../../virtio" }

@@ -1,2 +1,0 @@
-^bench: memory object 64 KiB create \+ map \+ unmap [0-9]+ us$
-^bench: compute [0-9]+ K iterations/s \((riscv64|aarch64)\)$

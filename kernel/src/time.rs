@@ -1,44 +1,18 @@
 //! Timer ticks and the wall clock.
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{HZ, arch, boot::BootInfo, dtb::Reg, selftest};
+use crate::{HZ, arch, boot::BootInfo, selftest};
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 static START_NS: AtomicU64 = AtomicU64::new(0);
 /// The wall clock (ns since 1970, UTC) at `START_NS`.
 static EPOCH_NS: AtomicU64 = AtomicU64::new(0);
 
-/// The real-time clock's registers: QEMU riscv64 `virt` has a Goldfish RTC
-/// (ns), aarch64 `virt` a PL031 (seconds). The wasm machine has none: its
-/// `/rtc` node carries the host's time in `time-ns` instead.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub fn rtc(info: &BootInfo) -> Option<(&'static str, Reg)> {
-    let n = info.fdt.find_compatible(&["google,goldfish-rtc", "arm,pl031"])?;
-    Some((n.compatible(), n.reg().next()?))
-}
-
+/// The host's time when it booted the kernel: the DTB's `ruos,wasm-rtc`
+/// node, `time-ns`.
 fn read_rtc(info: &BootInfo) -> Option<u64> {
-    if let Some(v) = info.fdt.find_compatible(&["ruos,wasm-rtc"]).and_then(|n| n.prop("time-ns")) {
-        return Some(u64::from_be_bytes(v.get(..8)?.try_into().ok()?));
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let (compat, reg) = rtc(info)?;
-        let p = arch::phys_to_virt(reg.base) as *const u32;
-        // Mapped by `mm::init` (direct map, device memory).
-        unsafe {
-            return Some(if compat == "arm,pl031" {
-                p.read_volatile() as u64 * 1_000_000_000
-            } else {
-                // Reading the low word latches the high one.
-                let lo = p.read_volatile() as u64;
-                let hi = p.add(1).read_volatile() as u64;
-                hi << 32 | lo
-            });
-        }
-    }
-    #[allow(unreachable_code)]
-    None
+    let v = info.fdt.find_compatible(&["ruos,wasm-rtc"]).and_then(|n| n.prop("time-ns"))?;
+    Some(u64::from_be_bytes(v.get(..8)?.try_into().ok()?))
 }
 
 pub fn start(info: &BootInfo) {

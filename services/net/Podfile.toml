@@ -1,5 +1,0 @@
-name = "net"
-entry = "/bin/net"
-
-[programs]
-"/bin/net" = "net"

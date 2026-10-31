@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use abi::{Error, Rights};
 
-use crate::arch::{self, AddrSpace, ThreadArch};
+use crate::arch::{self, AddrSpace};
 use crate::object::{Handle, HandleTable, Object};
 use crate::quota::{Charge, Quota, Res};
 use crate::sched;
@@ -60,35 +60,21 @@ pub struct Start {
     pub arg: u64,
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub const MAIN_ENTRY: u64 = u64::MAX;
 
 pub struct Thread {
     pub id: u32,
     pub task: Arc<Task>,
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub start: Start,
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub arch: ThreadArch,
     pub state: IrqLock<ThreadState>,
     pub sig: SignalCell,
     charge: IrqLock<Option<Charge>>,
-    /// Set while a CPU runs it (or is still switching away from it);
-    /// changed and read under `state`'s lock.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub on_cpu: AtomicBool,
-    /// The CPU it last ran on.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub cpu: core::sync::atomic::AtomicUsize,
 }
 
 pub struct ThreadState {
     pub run: Run,
     /// Bumped by every block: tells a pending wakeup whether it is stale.
     pub wgen: u64,
-    /// Ready, but still on a CPU: that CPU queues it once it is off it.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub requeue: bool,
     exit: Option<i64>,
     waiters: Vec<Waiter>,
 }
@@ -98,7 +84,6 @@ static NEXT_THREAD: AtomicU32 = AtomicU32::new(1);
 static TASKS: IrqLock<BTreeMap<u32, Arc<Task>>> = IrqLock::new(BTreeMap::new());
 static THREADS: IrqLock<BTreeMap<u32, Arc<Thread>>> = IrqLock::new(BTreeMap::new());
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub fn thread_by_id(id: u32) -> Option<Arc<Thread>> {
     THREADS.lock().get(&id).cloned()
 }
@@ -138,12 +123,9 @@ pub fn new_thread(task: &Arc<Task>, start: Start) -> Result<Arc<Thread>, Error> 
         id: NEXT_THREAD.fetch_add(1, Ordering::Relaxed),
         task: task.clone(),
         start,
-        arch: ThreadArch::new(&start)?,
-        state: IrqLock::new(ThreadState { run: Run::Ready, wgen: 0, requeue: false, exit: None, waiters: Vec::new() }),
+        state: IrqLock::new(ThreadState { run: Run::Ready, wgen: 0, exit: None, waiters: Vec::new() }),
         sig: SignalCell::new(0),
         charge: IrqLock::new(Some(charge)),
-        on_cpu: AtomicBool::new(false),
-        cpu: core::sync::atomic::AtomicUsize::new(0),
     });
     {
         let mut s = task.state.lock();
@@ -190,7 +172,6 @@ impl Task {
     }
 
     /// (threads alive, exit code once ended), for the snapshot.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn status(&self) -> (usize, Option<i64>) {
         let s = self.state.lock();
         (s.threads.len(), s.exit)
@@ -198,7 +179,6 @@ impl Task {
 }
 
 /// Every task the kernel knows (ended ones until their last handle goes).
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub fn all() -> Vec<Arc<Task>> {
     TASKS.lock().values().cloned().collect()
 }
@@ -291,10 +271,9 @@ pub fn fault(t: &Arc<Thread>, what: core::fmt::Arguments) {
 }
 
 /// init gets the serial port (handle 0), the boot pack (handle 1), the
-/// root quota (handle 2); then, natively, an Mmio + Irq pair per virtio
-/// device, or on wasm32 with a server the remote channel.
-#[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
-pub fn start_init(info: &crate::boot::BootInfo) {
+/// root quota (handle 2); then, with a server, the server connection
+/// (handle 3) and ingress (handle 4).
+pub fn start_init() {
     let Some(init) = crate::bootimg::find("init") else {
         crate::println!("task: no init");
         return;
@@ -312,12 +291,6 @@ pub fn start_init(info: &crate::boot::BootInfo) {
     }
     let root = crate::quota::root(arch::memory_total());
     handles.push(Handle { obj: Object::Quota(root.clone()), rights: Rights::ALL });
-    #[cfg(not(target_arch = "wasm32"))]
-    for (m, i) in crate::device::discover(info) {
-        crate::println!("task: virtio device {} at {:#x}, irq {} for init", m.device_id, m.reg.base, i.num);
-        handles.push(Handle { obj: Object::Mmio(m), rights: Rights::ALL });
-        handles.push(Handle { obj: Object::Irq(i), rights: Rights::ALL });
-    }
     if let Some(r) = arch::remote_channel(0) {
         crate::println!("task: server connection for init (handle 3)");
         handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });

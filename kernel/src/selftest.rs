@@ -20,13 +20,6 @@ pub fn breakpoint() {
     println!("trap: breakpoint handled ({} trap)", BREAKS.load(Ordering::Relaxed));
 }
 
-/// Called by the trap handler for a breakpoint exception.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub fn breakpoint_hit(pc: u64) {
-    BREAKS.fetch_add(1, Ordering::Relaxed);
-    println!("trap: breakpoint at {:#x}", pc);
-}
-
 pub fn on_tick(n: u64) {
     if n == TEST_TICKS {
         let ms = time::uptime_ns() / 1_000_000;

@@ -21,10 +21,6 @@ pub enum Object {
     Memory(Arc<Memory>),
     Serial(Arc<Serial>),
     Quota(Arc<Quota>),
-    #[cfg(not(target_arch = "wasm32"))]
-    Mmio(Arc<crate::device::Mmio>),
-    #[cfg(not(target_arch = "wasm32"))]
-    Irq(Arc<crate::device::Irq>),
 }
 
 impl Object {
@@ -37,10 +33,6 @@ impl Object {
             Object::Memory(_) => ObjType::Memory,
             Object::Serial(_) => ObjType::Serial,
             Object::Quota(_) => ObjType::Quota,
-            #[cfg(not(target_arch = "wasm32"))]
-            Object::Mmio(_) => ObjType::Mmio,
-            #[cfg(not(target_arch = "wasm32"))]
-            Object::Irq(_) => ObjType::Irq,
         }
     }
 
@@ -51,8 +43,6 @@ impl Object {
             Object::Thread(t) => Some(&t.sig),
             Object::Channel(c) => Some(&c.sig),
             Object::Serial(s) => Some(&s.sig),
-            #[cfg(not(target_arch = "wasm32"))]
-            Object::Irq(i) => Some(&i.sig),
             _ => None,
         }
     }
@@ -97,7 +87,6 @@ impl HandleTable {
     }
 
     /// (handle value, handle) of every slot in use.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn iter(&self) -> impl Iterator<Item = (u32, &Handle)> {
         self.slots.iter().enumerate().filter_map(|(i, s)| Some((i as u32, s.as_ref()?)))
     }

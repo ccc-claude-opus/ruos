@@ -1,5 +1,0 @@
-name = "blk"
-entry = "/bin/blk"
-
-[programs]
-"/bin/blk" = "blk"

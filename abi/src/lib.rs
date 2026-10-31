@@ -82,18 +82,7 @@ pub mod sys {
     pub const QUOTA_CREATE: usize = 30;
     /// (quota, *mut QuotaInfo) → 0.
     pub const QUOTA_INFO: usize = 31;
-    /// (mmio) → address of its registers mapped in the caller (native).
-    pub const MMIO_MAP: usize = 32;
-    /// (mmio, *mut [u64; 3]) → 0: physical address, size, device id
-    /// (the virtio device id; 0 if none).
-    pub const MMIO_INFO: usize = 33;
-    /// (irq) → 0. The interrupt is masked from when it fires (READABLE)
-    /// until the driver acknowledges it.
-    pub const IRQ_ACK: usize = 34;
-    /// (size) → a memory object of physically contiguous pages (for DMA).
-    pub const MEMORY_CREATE_DMA: usize = 35;
-    /// (memory (MANAGE), offset) → physical address of that byte.
-    pub const MEMORY_PHYS: usize = 36;
+    // 32–36 were the native machines' devices (v1): not used.
     /// CHANNEL_READ that waits for a message (or the peer closing) instead
     /// of answering ShouldWait.
     pub const CHANNEL_RECV: usize = 37;
@@ -260,8 +249,6 @@ pub enum ObjType {
     Port = 5,
     Quota = 6,
     Serial = 7,
-    Mmio = 8,
-    Irq = 9,
 }
 
 impl ObjType {
@@ -275,8 +262,6 @@ impl ObjType {
             5 => Port,
             6 => Quota,
             7 => Serial,
-            8 => Mmio,
-            9 => Irq,
             _ => return None,
         })
     }

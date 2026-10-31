@@ -1,25 +1,15 @@
-// Per-architecture link settings (linker script for the native kernels,
-// exported entry points for wasm32) and the boot images: every file in
-// $ROS_BOOT (set by run.sh to build/boot-<platform>) is embedded.
+// The wasm32 kernel's exported entry points, and the boot images: every
+// file in $ROS_BOOT (set by run.sh to build/boot-wasm) is embedded.
 use std::env;
 use std::fmt::Write;
 use std::path::PathBuf;
 
 fn main() {
-    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    match arch.as_str() {
-        "riscv64" | "aarch64" => {
-            let ld = format!("{dir}/src/arch/{arch}/linker.ld");
-            println!("cargo:rerun-if-changed={ld}");
-            println!("cargo:rustc-link-arg=-T{ld}");
-        }
-        "wasm32" => {
-            for e in ["kernel_dtb_buf", "kernel_boot", "kernel_irq", "kernel_syscall", "kernel_fault", "kernel_scratch", "kernel_remote", "kernel_remote_buf", "kernel_snapshot", "kernel_snapshot_len"] {
-                println!("cargo:rustc-link-arg=--export={e}");
-            }
-        }
-        _ => {}
+    for e in [
+        "kernel_dtb_buf", "kernel_boot", "kernel_irq", "kernel_syscall", "kernel_fault", "kernel_scratch", "kernel_remote", "kernel_remote_buf",
+        "kernel_snapshot", "kernel_snapshot_len",
+    ] {
+        println!("cargo:rustc-link-arg=--export={e}");
     }
 
     println!("cargo:rerun-if-env-changed=ROS_BOOT");

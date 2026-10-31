@@ -2,8 +2,6 @@
 //! with system calls, map (native) and clone copy-on-write. Pages are
 //! reference counted; a page shared by clones is copied before a write.
 use alloc::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
-use alloc::sync::Weak;
 use alloc::vec::Vec;
 
 use abi::Error;
@@ -13,26 +11,18 @@ use crate::sync::IrqLock;
 pub const PAGE: usize = 4096;
 
 /// Largest memory object.
-const MAX_SIZE: u64 = if cfg!(target_arch = "wasm32") { 16 << 20 } else { 256 << 20 };
+const MAX_SIZE: u64 = 16 << 20;
 
 /// One zero-initialized page: a frame (native) or a heap block (wasm32).
 pub struct Page {
     ptr: *mut u8,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub pa: u64,
 }
 
 unsafe impl Send for Page {}
 unsafe impl Sync for Page {}
 
 impl Page {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn new() -> Option<Page> {
-        let pa = crate::mm::frame::alloc()?;
-        Some(Page { ptr: crate::arch::phys_to_virt(pa) as *mut u8, pa })
-    }
 
-    #[cfg(target_arch = "wasm32")]
     fn new() -> Option<Page> {
         let l = core::alloc::Layout::from_size_align(PAGE, PAGE).unwrap();
         let ptr = unsafe { alloc::alloc::alloc_zeroed(l) };
@@ -46,31 +36,17 @@ impl Page {
 
 impl Drop for Page {
     fn drop(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::mm::frame::free(self.pa);
-        #[cfg(target_arch = "wasm32")]
         unsafe {
             alloc::alloc::dealloc(self.ptr, core::alloc::Layout::from_size_align(PAGE, PAGE).unwrap())
         };
     }
 }
 
-/// Where a memory object is mapped (native).
-#[cfg(not(target_arch = "wasm32"))]
-pub struct MapRef {
-    pub aspace: Weak<crate::arch::AddrSpace>,
-    pub va: u64,
-    pub first: usize,
-    pub n: usize,
-    pub writable: bool,
-}
 
 pub struct Memory {
     size: u64,
     _charge: Option<crate::quota::Charge>,
     pages: IrqLock<Vec<Arc<Page>>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    maps: IrqLock<Vec<MapRef>>,
 }
 
 impl Memory {
@@ -79,8 +55,6 @@ impl Memory {
             size,
             _charge: charge,
             pages: IrqLock::new(pages),
-            #[cfg(not(target_arch = "wasm32"))]
-            maps: IrqLock::new(Vec::new()),
         })
     }
 
@@ -101,30 +75,7 @@ impl Memory {
         Ok(Memory::with_pages(n as u64 * PAGE as u64, pages, charge))
     }
 
-    /// Physically contiguous pages (for DMA), charged to `quota`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn create_dma(size: u64, quota: &Arc<crate::quota::Quota>) -> Result<Arc<Memory>, Error> {
-        if size == 0 || size > (4 << 20) {
-            return Err(Error::InvalidArgs);
-        }
-        let n = size.div_ceil(PAGE as u64);
-        let charge = crate::quota::Charge::new(quota, crate::quota::Res::Memory, n * PAGE as u64)?;
-        let base = crate::mm::frame::alloc_contiguous(n).ok_or(Error::NoMemory)?;
-        let pages = (0..n)
-            .map(|i| {
-                let pa = base + i * PAGE as u64;
-                Arc::new(Page { ptr: crate::arch::phys_to_virt(pa) as *mut u8, pa })
-            })
-            .collect();
-        Ok(Memory::with_pages(n * PAGE as u64, pages, Some(charge)))
-    }
 
-    /// Physical address of byte `off`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn phys(&self, off: u64) -> Result<u64, Error> {
-        self.range(off, 1)?;
-        Ok(self.pages.lock()[off as usize / PAGE].pa + off % PAGE as u64)
-    }
 
     pub fn size(&self) -> u64 {
         self.size
@@ -171,8 +122,6 @@ impl Memory {
         let pages = self.pages.lock().clone();
         let c = Memory::with_pages(self.size, pages, Some(charge));
         // Writable mappings of the original must now fault on write.
-        #[cfg(not(target_arch = "wasm32"))]
-        self.remap_all();
         Ok(c)
     }
 
@@ -187,52 +136,7 @@ impl Memory {
                 pages[i] = Arc::new(n);
             }
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        self.remap(i);
         Ok(())
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl Memory {
-    pub fn pages(&self) -> usize {
-        self.pages.lock().len()
-    }
-
-    /// Physical address of page `i` and whether only this object holds it.
-    pub fn page(&self, i: usize) -> (u64, bool) {
-        let pages = self.pages.lock();
-        (pages[i].pa, Arc::strong_count(&pages[i]) == 1)
-    }
-
-    pub fn add_map(&self, m: MapRef) {
-        self.maps.lock().push(m);
-    }
-
-    pub fn remove_map(&self, aspace: *const crate::arch::AddrSpace, va: u64) {
-        self.maps.lock().retain(|m| !(m.aspace.as_ptr() == aspace && m.va == va));
-    }
-
-    /// Rewrites every mapping's entry for page `i`.
-    fn remap(&self, i: usize) {
-        let (pa, unique) = self.page(i);
-        let maps: Vec<_> = self
-            .maps
-            .lock()
-            .iter()
-            .filter(|m| i >= m.first && i < m.first + m.n)
-            .map(|m| (m.aspace.clone(), m.va + ((i - m.first) * PAGE) as u64, m.writable))
-            .collect();
-        for (a, va, w) in maps {
-            if let Some(a) = a.upgrade() {
-                a.set_pte(va, pa, w && unique);
-            }
-        }
-    }
-
-    fn remap_all(&self) {
-        for i in 0..self.pages() {
-            self.remap(i);
-        }
-    }
-}

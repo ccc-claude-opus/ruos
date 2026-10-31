@@ -1,19 +1,20 @@
 //! The store's persistent log. Sector 0: `ROSDISK1`, `used BYTES`,
 //! `boot N`. From sector 1: records appended one after another:
 //! `obj ID LEN` + bytes + `\n`, and `ref NAME:TAG ID`. Replayed at boot.
-//! The disk is the blk service (native) or the server's (wasm32).
+//! The disk is the machine's on the server (`STORE/disks/MACHINE.img`),
+//! read and written through the remote channel.
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use libsys::blk::{Disk, MAX_SECTORS, SECTOR};
 use libsys::store::{DISK_INFO, DISK_READ, DISK_WRITE, OK};
 use libsys::{Channel, Error, Result};
 
-pub enum Dev {
-    Blk(Disk),
-    /// The server, through the remote channel.
-    Remote(Channel),
-}
+pub const SECTOR: usize = 512;
+/// Sectors per request.
+pub const MAX_SECTORS: usize = 64;
+
+/// The server, through the remote channel.
+pub struct Dev(pub Channel);
 
 fn remote_call(c: Channel, msg: &[u8]) -> Result<Vec<u8>> {
     c.write(msg, &[])?;
@@ -27,38 +28,23 @@ fn remote_call(c: Channel, msg: &[u8]) -> Result<Vec<u8>> {
 
 impl Dev {
     fn sectors(&self) -> Result<u64> {
-        match self {
-            Dev::Blk(d) => d.sectors(),
-            Dev::Remote(c) => {
-                let r = remote_call(*c, &[DISK_INFO])?;
-                Ok(u64::from_le_bytes(r.get(..8).ok_or(Error::Fault)?.try_into().unwrap()))
-            }
-        }
+        let r = remote_call(self.0, &[DISK_INFO])?;
+        Ok(u64::from_le_bytes(r.get(..8).ok_or(Error::Fault)?.try_into().unwrap()))
     }
 
     fn read(&self, sector: u64, count: usize) -> Result<Vec<u8>> {
-        match self {
-            Dev::Blk(d) => d.read(sector, count),
-            Dev::Remote(c) => {
-                let mut req = Vec::from(&[DISK_READ][..]);
-                req.extend_from_slice(&sector.to_le_bytes());
-                req.extend_from_slice(&(count as u32).to_le_bytes());
-                remote_call(*c, &req)
-            }
-        }
+        let mut req = Vec::from(&[DISK_READ][..]);
+        req.extend_from_slice(&sector.to_le_bytes());
+        req.extend_from_slice(&(count as u32).to_le_bytes());
+        remote_call(self.0, &req)
     }
 
     fn write(&self, sector: u64, data: &[u8]) -> Result<()> {
-        match self {
-            Dev::Blk(d) => d.write(sector, data),
-            Dev::Remote(c) => {
-                let mut req = Vec::from(&[DISK_WRITE][..]);
-                req.extend_from_slice(&sector.to_le_bytes());
-                req.extend_from_slice(data);
-                req.resize(9 + data.len().div_ceil(SECTOR) * SECTOR, 0);
-                remote_call(*c, &req).map(|_| ())
-            }
-        }
+        let mut req = Vec::from(&[DISK_WRITE][..]);
+        req.extend_from_slice(&sector.to_le_bytes());
+        req.extend_from_slice(data);
+        req.resize(9 + data.len().div_ceil(SECTOR) * SECTOR, 0);
+        remote_call(self.0, &req).map(|_| ())
     }
 }
 

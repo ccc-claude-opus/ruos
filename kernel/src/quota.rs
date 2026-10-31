@@ -90,7 +90,6 @@ impl Quota {
     }
 
     /// Bytes still available here and in every ancestor.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn mem_left(&self) -> u64 {
         let mut left = u64::MAX;
         let mut q = Some(self);
@@ -101,7 +100,6 @@ impl Quota {
         left
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn parent(&self) -> Option<&Arc<Quota>> {
         self.parent.as_ref()
     }

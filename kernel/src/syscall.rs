@@ -99,40 +99,6 @@ pub fn dispatch(t: &Arc<Thread>, nr: usize, a: [u64; 6]) -> Sys {
         sys::MEMORY_UNMAP => ok(t.task.aspace.unmap_memory(a[0], a[1]).map(|_| 0)),
         sys::SERIAL_READ => ok(serial_read(t, a[0], a[1], a[2])),
         sys::SERIAL_WRITE => ok(serial_write(t, a[0], a[1], a[2])),
-        #[cfg(not(target_arch = "wasm32"))]
-        sys::MMIO_MAP => ok(match object(t, a[0], Rights::MANAGE) {
-            Ok(Object::Mmio(m)) => t.task.aspace.map_device(m.reg.base, m.reg.size).map(|v| v as i64),
-            Ok(_) => Err(Error::WrongType),
-            Err(e) => Err(e),
-        }),
-        #[cfg(not(target_arch = "wasm32"))]
-        sys::MMIO_INFO => ok(match object(t, a[0], Rights::NONE) {
-            Ok(Object::Mmio(m)) => {
-                let b: Vec<u8> = [m.reg.base, m.reg.size, m.device_id as u64].iter().flat_map(|x| x.to_le_bytes()).collect();
-                t.task.aspace.write(a[1], &b).map(|_| 0)
-            }
-            Ok(_) => Err(Error::WrongType),
-            Err(e) => Err(e),
-        }),
-        #[cfg(not(target_arch = "wasm32"))]
-        sys::IRQ_ACK => ok(match object(t, a[0], Rights::WRITE) {
-            Ok(Object::Irq(i)) => {
-                i.ack();
-                Ok(0)
-            }
-            Ok(_) => Err(Error::WrongType),
-            Err(e) => Err(e),
-        }),
-        #[cfg(not(target_arch = "wasm32"))]
-        sys::MEMORY_CREATE_DMA => ok(Memory::create_dma(a[0], &t.task.quota)
-            .and_then(|m| t.task.add_handle(Object::Memory(m), Rights::ALL))
-            .map(|h| h as i64)),
-        #[cfg(not(target_arch = "wasm32"))]
-        sys::MEMORY_PHYS => ok(memory(t, a[0], Rights::MANAGE).and_then(|m| m.phys(a[1])).map(|p| p as i64)),
-        #[cfg(target_arch = "wasm32")]
-        sys::MMIO_MAP | sys::MMIO_INFO | sys::IRQ_ACK | sys::MEMORY_CREATE_DMA | sys::MEMORY_PHYS => {
-            Sys::Ret(Error::NotSupported.code())
-        }
         _ => Sys::Ret(Error::NoSys.code()),
     }
 }

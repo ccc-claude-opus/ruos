@@ -1,6 +1,0 @@
-name = "bench-wasm"
-entry = "/bin/bench"
-arches = "wasm32"
-
-[programs]
-"/bin/bench" = "bench"

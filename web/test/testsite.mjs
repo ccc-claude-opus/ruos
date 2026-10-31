@@ -1,7 +1,7 @@
 // The small web site that curl in a machine fetches in the tests
-// (tests/m21.expect). boot.mjs starts one for itself; test.sh starts one
-// for the QEMU machines: `node web/test/testsite.mjs` prints
-// `testsite: listening on PORT` and runs until killed.
+// (tests/m21.expect); boot.mjs starts it. On its own,
+// `node web/test/testsite.mjs` prints `testsite: listening on PORT` and runs
+// until killed.
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 

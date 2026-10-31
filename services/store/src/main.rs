@@ -1,9 +1,10 @@
 //! store: the object store. Its namespace has `pack` (the boot pack), a
-//! first `client`, `disk` (the blk service) and/or `remote` (a channel to
-//! podsrv). It serves programs, objects and refs, and the pods' writable
-//! layers: in memory, or on the server when there is a remote. New objects
-//! and refs go to the disk's log (disk.rs; the server's disk on wasm32)
-//! and come back at the next boot. Every object of the pack is checked.
+//! first `client`, `web` (clients from it may make HTTP requests) and,
+//! with a server, `remote` (the kernel's channel to ruos serve). It serves
+//! programs, objects and refs, and the pods' writable layers: in memory, or
+//! on the server when there is a remote. New objects and refs go to the
+//! disk's log (disk.rs; the machine's disk on the server) and come back at
+//! the next boot. Every object of the pack is checked.
 #![no_std]
 #![no_main]
 
@@ -16,9 +17,6 @@ use alloc::vec::Vec;
 
 use libsys::store::*;
 use libsys::wire::{decode, encode, text};
-use core::cell::RefCell;
-
-use libsys::net::{Net, WebSocket};
 use libsys::{Channel, Error, Handle, Memory, Port, ns, println, signal};
 use objstore::{Id, Index, Kind, Manifest, Objects, Pack, Tree, full_ref};
 
@@ -26,12 +24,9 @@ mod disk;
 
 libsys::entry!(main);
 
-/// The server: the kernel's remote channel (wasm32) or a WebSocket over
-/// the network (native). Requests and answers are store messages.
-enum Remote {
-    Chan(Channel),
-    Ws(RefCell<WebSocket>),
-}
+/// The server: the kernel's remote channel. Requests and answers are
+/// store messages.
+struct Remote(Channel);
 
 static LOST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static DISK_FULL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -46,31 +41,16 @@ impl Remote {
     }
 
     fn call_once(&self, msg: &[u8]) -> Vec<u8> {
-        match self {
-            Remote::Chan(r) => {
-                if r.write(msg, &[]).is_err() {
-                    return reply(FAILED, b"server gone");
-                }
-                let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
-                match r.recv(&mut buf, &mut []) {
-                    Ok((n, _)) => buf[..n].to_vec(),
-                    Err(_) => reply(FAILED, b"server gone"),
-                }
-            }
-            Remote::Ws(ws) => {
-                let mut ws = ws.borrow_mut();
-                let ws = &mut *ws;
-                if ws.send(msg).is_err() {
-                    return reply(FAILED, b"server gone");
-                }
-                ws.recv().unwrap_or_else(|_| reply(FAILED, b"server gone"))
-            }
+        if self.0.write(msg, &[]).is_err() {
+            return reply(FAILED, b"server gone");
+        }
+        let mut buf = alloc::vec![0u8; libsys::MAX_MSG_BYTES];
+        match self.0.recv(&mut buf, &mut []) {
+            Ok((n, _)) => buf[..n].to_vec(),
+            Err(_) => reply(FAILED, b"server gone"),
         }
     }
 }
-
-/// The registry, as QEMU's user network forwards it (`guestfwd`).
-const REGISTRY: ([u8; 4], u16) = ([10, 0, 2, 100], 80);
 
 struct Store<'a> {
     pack: Pack<'a>,
@@ -113,8 +93,7 @@ impl Store<'_> {
         }
     }
 
-    /// The program for this architecture, or else its wasm32 build (which
-    /// the caller runs with wasmrt).
+    /// The program (the image's wasm32 build).
     fn get_program(&self, name: &str, c: Channel) -> libsys::Result<()> {
         let man = |i: Id| {
             objstore::manifest_of(self, &i, libsys::ARCH).or_else(|_| objstore::manifest_of(self, &i, "wasm32")).ok()
@@ -465,23 +444,7 @@ fn main(_arg: usize) -> i64 {
         }
     };
     let chan = ns::get("remote").map(Channel);
-    let remote = match (chan, ns::get("net")) {
-        (Some(c), _) => Some(Remote::Chan(c)),
-        (None, Some(n)) => {
-            let (ip, port) = REGISTRY;
-            match Net(Channel(n)).connect(ip, port).and_then(|s| WebSocket::open(s, "registry", &format!("/v1/remote?machine={}", libsys::ARCH))) {
-                Ok(ws) => {
-                    println!("store: registry at {}.{}.{}.{}:{} over the network", ip[0], ip[1], ip[2], ip[3], port);
-                    Some(Remote::Ws(RefCell::new(ws)))
-                }
-                Err(e) => {
-                    println!("store: no registry on the network ({:?})", e);
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
+    let remote = chan.map(Remote);
     println!(
         "store: {} objects, {} images, hashes verified{}",
         pack.objects.len(),
@@ -489,12 +452,7 @@ fn main(_arg: usize) -> i64 {
         if remote.is_some() { "; writable layers on the server" } else { "" }
     );
     let mut st = Store { pack, objects: BTreeMap::new(), refs: BTreeMap::new(), uppers: BTreeMap::new(), remote, log: None, mems: BTreeMap::new() };
-    let dev = match (ns::get("disk"), chan) {
-        (Some(d), _) => Some(disk::Dev::Blk(libsys::blk::Disk(Channel(d)))),
-        (None, Some(r)) => Some(disk::Dev::Remote(r)),
-        _ => None,
-    };
-    if let Some(dev) = dev {
+    if let Some(dev) = chan.map(disk::Dev) {
         match disk::Log::open(dev) {
             Ok((log, records)) => {
                 let (mut objs, mut refs) = (0, 0);

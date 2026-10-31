@@ -3,10 +3,10 @@
 //! (`pod/P`) and on which node: Deployments are scaled and rolled out
 //! (one new pod more than wanted, an old one goes once enough are ready),
 //! and each new pod is scheduled: nodes that are up (their lease is
-//! fresh), that can run the image (its architecture, or wasm32 under
-//! wasmrt) and match the Deployment's `node`, the one with the fewest pods
-//! first, native before wasmrt. A node that is gone loses its pods; they
-//! are made again elsewhere.
+//! fresh), that can run the image (it has the node's architecture,
+//! wasm32) and match the Deployment's `node`, the one with the fewest pods
+//! first. A node that is gone loses its pods; they are made again
+//! elsewhere.
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;

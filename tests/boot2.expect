@@ -1,5 +1,5 @@
 ^store: disk 16384 KiB, boot 2, [1-9][0-9]* objects and [0-9]+ refs from earlier boots$
-^snap:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$
+^snap:latest +[0-9a-f]{12}  wasm32$
 ^(/[^ ]* )?\$ dock run snap$
 ^writer: no /etc/motd$
 ^writer: count 2$

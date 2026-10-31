@@ -32,7 +32,6 @@ impl<'a> Fdt<'a> {
         unsafe { fdt::Fdt::from_ptr(p) }.ok().map(Fdt)
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn new(data: &'a [u8]) -> Option<Fdt<'a>> {
         fdt::Fdt::new(data).ok().map(Fdt)
     }

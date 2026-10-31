@@ -1,9 +1,0 @@
-name = "writer-wasm"
-entry = "/bin/writer"
-arches = "wasm32"
-
-[programs]
-"/bin/writer" = "writer"
-
-[files]
-"/etc/motd" = "motd.txt"

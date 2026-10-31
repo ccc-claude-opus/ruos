@@ -253,8 +253,7 @@ impl Store {
     }
 
     /// Starts image `name` in namespace `ns`, charged to `quota` (None:
-    /// the caller's). An image with only a wasm32 build runs under wasmrt
-    /// on a native machine.
+    /// the caller's).
     pub fn spawn(&self, name: &str, ns: &Namespace, quota: Option<Handle>) -> Result<Handle> {
         let (m, len) = self.program(name)?;
         let r = self.spawn_module(m, len, name, ns, quota);
@@ -262,20 +261,8 @@ impl Store {
         r
     }
 
-    /// Starts a program image held in `m` (`len` bytes; the caller keeps
-    /// `m`): a native program as it is, a wasm module on a native machine
-    /// under wasmrt.
+    /// Starts a program image held in `m` (`len` bytes; the caller keeps `m`).
     pub fn spawn_module(&self, m: Memory, len: u64, name: &str, ns: &Namespace, quota: Option<Handle>) -> Result<Handle> {
-        let mut head = [0u8; 4];
-        m.read(0, &mut head)?;
-        if &head == b"\0asm" && crate::ARCH != "wasm32" {
-            let (rt, rlen) = self.program("wasmrt")?;
-            let module = m.0.dup(crate::Rights::ALL)?;
-            let ns = ns.clone().add(&alloc::format!("wasm:module:{len}"), module);
-            let r = ns.spawn(rt, rlen, name, quota);
-            let _ = rt.0.close();
-            return r;
-        }
         ns.spawn(m, len, name, quota)
     }
 

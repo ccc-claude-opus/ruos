@@ -1,7 +1,8 @@
-//! ruos kernel: a capability microkernel for riscv64, aarch64 and wasm32.
+//! ruos kernel: a capability microkernel, compiled to wasm32 and run in the
+//! browser's kernel Worker (the host is web/kernel_host.js).
 //!
-//! The architecture code (`arch::*`) boots the machine, parses the DTB into a
-//! [`boot::BootInfo`] and calls [`kmain`]; everything else is shared.
+//! The host hands it a DTB; `arch` parses it into a [`boot::BootInfo`] and
+//! calls [`kmain`].
 #![no_std]
 #![no_main]
 
@@ -13,27 +14,17 @@ mod arch;
 mod boot;
 mod bootimg;
 mod channel;
-#[cfg(not(target_arch = "wasm32"))]
-mod device;
 mod dtb;
-#[cfg(not(target_arch = "wasm32"))]
-mod elf;
 mod heap;
-#[cfg(not(target_arch = "wasm32"))]
-mod kstack;
 mod memory;
-#[cfg(not(target_arch = "wasm32"))]
-mod mm;
 mod object;
 mod port;
 mod quota;
 mod random;
-#[cfg_attr(target_arch = "wasm32", path = "arch/wasm32/sched.rs")]
 mod sched;
 mod selftest;
 mod serial;
 mod signal;
-#[cfg(target_arch = "wasm32")]
 mod snapshot;
 mod sync;
 mod syscall;
@@ -67,7 +58,7 @@ pub fn kmain(info: &boot::BootInfo) {
     time::start(info);
     random::init(info);
     arch::start_cpus(info);
-    task::start_init(info);
+    task::start_init();
     arch::enable_interrupts();
 }
 

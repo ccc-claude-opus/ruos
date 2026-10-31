@@ -1,6 +1,5 @@
 //! init: the first task. Handle 0 is the serial port, 1 the boot pack, 2
-//! the root quota; then Mmio + Irq pairs of virtio devices (native) or the
-//! channel to podsrv (wasm32 with a server). Starts the store service from the pack, runs the
+//! the root quota; then, with a server, the server connection and ingress. Starts the store service from the pack, runs the
 //! kernel tests, then console, dock, kube and a shell (with `http`, the
 //! store's web client); ends with the shell.
 #![no_std]
@@ -9,10 +8,9 @@
 extern crate alloc;
 
 use libsys::console::Console;
-use libsys::net::Net;
 use libsys::ns::Namespace;
 use libsys::store::Store;
-use libsys::{Channel, Handle, Memory, Mmio, ObjType, Quota, println};
+use libsys::{Channel, Handle, Memory, ObjType, Quota, println};
 use objstore::Pack;
 
 libsys::entry!(main);
@@ -28,21 +26,18 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
     Some(mine)
 }
 
-/// The drivers and the store service, started straight from the pack.
-/// The store, its `web` client (the http capability, for the shell), a
-/// client of the net service for the shell (if there is one) and the
-/// ingress channel from the server (for kube; wasm32).
-fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>, Option<Channel>)> {
+/// The store service, started straight from the pack: the store, its `web`
+/// client (the http capability, for the shell) and the ingress channel
+/// from the server (for kube).
+fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>)> {
     let size = pack_mem.size().ok()?;
     let mut bytes = alloc::vec![0u8; size as usize];
     pack_mem.read(0, &mut bytes).ok()?;
     let pack = Pack::parse(&bytes, false).ok()?;
     let mut ns = Namespace::new();
-    let mut net = None;
     let mut ingress = None;
     let mut have_remote = false;
-    // Devices (Mmio + Irq) or the server channel follow the quota. Take
-    // stock first: starting a driver moves handles away.
+    // The server's channels follow the quota.
     let mut found = alloc::vec::Vec::new();
     for h in 3..64 {
         match Handle(h).info() {
@@ -52,23 +47,6 @@ fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>, Option<
     }
     for (h, t) in found {
         match t {
-            ObjType::Mmio => {
-                let dev = || Namespace::new().add("mmio", Handle(h)).add("irq", Handle(h + 1));
-                match Mmio(Handle(h)).info() {
-                    Ok((_, _, virtio::BLOCK)) => {
-                        if let Some(c) = from_pack(&pack, "blk", dev()) {
-                            ns = ns.add("disk", c.0);
-                        }
-                    }
-                    Ok((_, _, virtio::NET)) => {
-                        if let Some(c) = from_pack(&pack, "net", dev()) {
-                            net = Net(c).client().ok();
-                            ns = ns.add("net", c.0);
-                        }
-                    }
-                    _ => {}
-                }
-            }
             // The server connection first (the store's), then ingress (kube's).
             ObjType::Channel if !have_remote => {
                 ns = ns.add("remote", Handle(h));
@@ -79,7 +57,7 @@ fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Net>, Option<
         }
     }
     let (web, web_srv) = Channel::create().ok()?;
-    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, net, ingress))
+    from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, ingress))
 }
 
 /// A new client channel of the console.
@@ -90,7 +68,7 @@ fn console_client(con: &Console) -> Option<Handle> {
 }
 
 fn main(_arg: usize) -> i64 {
-    let Some((store, web, net, ingress)) = start_store(Memory(Handle(1))) else {
+    let Some((store, web, ingress)) = start_store(Memory(Handle(1))) else {
         println!("init: cannot start the store");
         return 1;
     };
@@ -136,10 +114,6 @@ fn main(_arg: usize) -> i64 {
 
     let (Some(c), Ok(s)) = (console_client(&con), store.connect()) else { return 1 };
     let ns = Namespace::new().add("console", c).add("store", s.0.0).add("dock", dock.0).add("kube", kube.0).add("http", web.0);
-    let ns = match net {
-        Some(n) => ns.add("net", n.0.0),
-        None => ns,
-    };
     let shell = match store.spawn("shell", &ns, None) {
         Ok(t) => t,
         Err(e) => {

@@ -81,11 +81,7 @@ dock run greeter
 dock ls w /data
 dock cat w /data/count
 dock rm w
-dock run hello-wasm
-dock run --name ww writer-wasm
 dock run bench
-dock run bench-wasm
-dock run ktest-wasm
 kube get
 kube apply kube/web.toml
 kube get pods

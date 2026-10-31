@@ -5,41 +5,37 @@
 
 它刻意不模仿 Unix：沒有 fork、沒有 pid、沒有 root、沒有全域的檔名。一個程式能做什麼，完全取決於別人交給它哪些 handle。
 
-同一份核心跑在三種機器上：
+**前端是 ruos，後端是你的桌機**（v2.0，設計見 [doc/v2.md](doc/v2.md)）：
 
-| 平台 | 執行環境 | 說明 |
-|---|---|---|
-| WebAssembly | 瀏覽器 | 核心跑在 Worker 裡，每個任務是一個 wasm instance + 自己的 Worker |
-| RISC-V | QEMU `virt`，OpenSBI | Sv39 分頁、PLIC、SBI HSM 多核 |
-| ARM | QEMU `virt`，cortex-a72 | 4 層分頁、GIC、PSCI 多核；可從 EL1 或 EL2 開機 |
+- **前端**：ruos 的核心編成 WebAssembly，跑在瀏覽器的 Worker 裡，每個任務是一個 wasm instance + 自己的 Worker。
+- **後端**：`ruos serve`（Rust）跑在桌機的作業系統上：映像庫、pod 的可寫層、機器的磁碟、叢集的記錄，以及代為連線的 HTTP。
+- 兩邊以 capability 溝通：後端的服務在 ruos 裡是一個 handle，只有拿到的程式能用。
+
+v1（tag `v1`）的同一份核心也跑在 RISC-V 與 ARM 上；v2.0 放棄了這兩個平台。
 
 ## 安裝（不用建置）
 
 ```sh
 cargo install ruos
 ruos                      # 啟動並在瀏覽器打開
-ruos riscv64              # 在 QEMU 的 RISC-V 上開機（要先裝 QEMU）；Ctrl-A x 離開
-ruos aarch64              # ARM
 ```
 
-`ruos` 這個執行檔帶著整個系統（wasm 核心、網頁、QEMU 核心、映像庫），資料放在 `~/.ruos`。
+`ruos` 這個執行檔帶著整個系統（wasm 核心、網頁、映像庫），資料放在 `~/.ruos`。
 
 ## 從原始碼建置
 
-需要：rustc nightly（含 `rust-src`、`llvm-tools`）與 target `wasm32-unknown-unknown`、`riscv64imac-unknown-none-elf`、`aarch64-unknown-none-softfloat`、`riscv64gc-unknown-none-elf`、`aarch64-unknown-none`；Node 24；QEMU 10（只有跑 RISC-V / ARM 才需要）。
+需要：rustc nightly（含 `rust-src`）與 target `wasm32-unknown-unknown`；Node 24。
 
 ```sh
 ./run.sh wasm             # 建置後開 http://127.0.0.1:8780（瀏覽器版）
 ./run.sh dist             # 建全部並放進 ruos/assets（發布 ruos 套件用）
-./run.sh riscv64          # 在 QEMU 開機（Ctrl-A x 離開）
-./run.sh aarch64          # ARM，從 EL1；aarch64-el2 從 EL2
-./test.sh                 # 所有平台的完整測試
+./test.sh                 # 完整測試：主機端 crate + 瀏覽器版（Node 裡開機）
 cargo test --release      # 主機端 crate：objstore、podimg、ruos
 ```
 
 ## 課程
 
-網頁右邊有十六課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
+網頁右邊有十五課，每一課都是幾段說明加上可以點的指令（點了就送進終端機）：
 
 1. **先四處看看**：`ls`、`cat`、管線與導向、`tree /`、執行 `/bin` 的程式、`save`
 1. **管線、變數與腳本**：`cut | sort | uniq -c`、`for`、`$(…)`、`||`、`sh count.sh 5`
@@ -50,7 +46,6 @@ cargo test --release      # 主機端 crate：objstore、podimg、ruos
 1. **pod：隔離與額度**：`dock run -d --mem 4M hog`，看 quota 樹被用滿
 1. **可寫層與 commit**：`dock run --name w writer`、`dock commit w snap`
 1. **自己做一個映像**：`dock write` 一個 Podfile、`dock build`
-1. **同一份程式，三種機器**：多架構映像、wasmrt
 1. **宣告想要的狀態（kube）**：`kube apply`、殺掉 pod 看它回來、`kube scale`、back-off、Space
 1. **Service 與 Config**：`kube call echo hi`、只有 `uses` 的 pod 連得到、改 Config 觸發滾動更新、`kube rollout undo`、liveness
 1. **叢集**：另開一頁 `?machine=b2` 多一個節點、`kube get nodes`、pod 分到哪台、關掉那頁看 pod 搬家
@@ -265,28 +260,26 @@ app = "web"
 
 ## 設計
 
-**核心物件**：Task（位址空間 + handle 表）、Thread、Channel（訊息可夾帶 handle）、Port（等待事件）、Memory（可共享、copy on write）、Quota（階層式的記憶體 / 任務 / 執行緒預算）、Mmio / Irq（給使用者空間驅動）。程式用 `spawn(image, quota, handles)` 啟動；主控台、檔案、磁碟、網路、映像庫都是使用者空間的服務，彼此以 Channel 溝通。
+**核心物件**：Task（位址空間 + handle 表）、Thread、Channel（訊息可夾帶 handle）、Port（等待事件）、Memory（可共享、copy on write）、Quota（階層式的記憶體 / 任務 / 執行緒預算）。程式用 `spawn(image, quota, handles)` 啟動；主控台、檔案、映像庫都是使用者空間的服務，彼此以 Channel 溝通。
 
 **名稱空間**：子程式的 handle 0 是一條 bootstrap channel，第一則訊息列出「名稱 → handle」。父程式決定給什麼，子程式就只有那些。
 
-**pod**：映像存在內容定址的物件庫（BLAKE3；tree / manifest / index 構成 Merkle tree；一個映像可帶多個架構）。pod = 唯讀映像層 + copy-on-write 可寫層 + 自己的 Quota + 名稱空間。可寫層可以 commit 成新映像、push 到 registry。映像以 `Podfile.toml` 描述，主機上用 `podimg` 建，系統裡用 `dock build`。
+**pod**：映像存在內容定址的物件庫（BLAKE3；tree / manifest / index 構成 Merkle tree）。pod = 唯讀映像層 + copy-on-write 可寫層 + 自己的 Quota + 名稱空間。可寫層可以 commit 成新映像、push 到 registry。映像以 `Podfile.toml` 描述，主機上用 `podimg` 建，系統裡用 `dock build`。
 
 **瀏覽器版**：系統呼叫是 wasm import，經 SharedArrayBuffer + `Atomics.wait` 進核心（需要 COOP / COEP，`ruos serve` 會送）。記憶體配額就是 linear memory 的上限。核心有一條 remote channel 經 WebSocket 連到 `ruos serve`：pod 的可寫層、磁碟、registry 都在那裡；連線斷了會自動接回同一個 session。
-
-**原生版**：virtio-blk 磁碟、virtio-net + smoltcp 的網路（store 以同一套協定連到 `ruos serve`），預設 4 顆 CPU。只有 wasm32 版本的映像，在 RISC-V / ARM 上由 wasmrt（自己寫的 wasm 直譯器）執行。
 
 ## 目錄
 
 | 路徑 | 內容 |
 |---|---|
-| `kernel/` | 核心（`arch/` 下有 riscv64、aarch64、wasm32）；`snapshot.rs` 給網頁的系統圖 |
+| `kernel/` | 核心（wasm32；`arch/wasm32` 是和 host 的介面）；`snapshot.rs` 給網頁的系統圖 |
 | `abi/` | 系統呼叫號碼、錯誤碼、rights（核心與使用者空間共用） |
 | `libsys/` | 使用者空間函式庫：IPC、名稱空間、各服務的 client、映像 |
 | `objstore/` | 物件庫格式與 pack（OS 與主機共用） |
-| `services/` | init、console、shell、store、overlay、dock、kube、blk、net、wasmrt |
+| `services/` | init、console、shell、store、overlay、dock、kube |
 | `apps/` | snoop、hello、writer、hog、bench、ktest 等 |
 | `podimg/` | 主機工具：建映像 |
-| `ruos/` | 發布的套件：`ruos` 指令（伺服器：registry + 可寫層 + 磁碟 + 網頁；開瀏覽器版、開 QEMU），發布時內含預先建好的系統 |
+| `ruos/` | 發布的套件：`ruos` 指令（後端：registry + 可寫層 + 磁碟 + 叢集記錄 + 網頁），發布時內含預先建好的系統 |
 | `web/` | 網頁：終端機、課程（`lessons.js`）、系統圖（`inspector.js`）、核心 Worker |
 | `tests/` | 測試輸入與預期輸出 |
 
@@ -294,7 +287,7 @@ app = "web"
 
 ## 歷史
 
-1–10 版做出核心、pod 與三個平台。11–25 版曾試著走 POSIX 相容（WASI / WASIX、C 程式、coreutils、POSIX shell、tokio），之後決定專心做能力式與 pod 的教學系統，那些都移除了（留在搬到這個 GitHub repo 之前的舊 repo，tag `posix-era`）。
+1–10 版做出核心、pod 與三個平台（wasm、RISC-V、ARM）。11–25 版曾試著走 POSIX 相容（WASI / WASIX、C 程式、coreutils、POSIX shell、tokio），之後決定專心做能力式與 pod 的教學系統，那些都移除了（留在搬到這個 GitHub repo 之前的舊 repo，tag `posix-era`）。M11–M23 做出教學 shell、網頁、kube、serverless、curl 與對外入口：這就是 tag `v1`。v2.0 起前端只有瀏覽器，後端交給桌機的 OS（[doc/v2.md](doc/v2.md)）。
 
 ## 授權
 

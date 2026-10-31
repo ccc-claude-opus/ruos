@@ -1,8 +1,0 @@
-# hello as an image with only a wasm32 build: native machines run it
-# under wasmrt.
-name = "hello-wasm"
-entry = "/bin/hello"
-arches = "wasm32"
-
-[programs]
-"/bin/hello" = "hello"

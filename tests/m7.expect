@@ -3,4 +3,4 @@
 ^pushed snap:latest: [0-9]+ objects$
 ^server: writable layers .*$
 ^server: (s[0-9-]+|w-[0-9a-f]+)/b1-pod[0-9]+/files/data/count = 2$
-^verified snap:latest [0-9a-f]{12}: [0-9]+ objects, riscv64, aarch64, wasm32$
+^verified snap:latest [0-9a-f]{12}: [0-9]+ objects, wasm32$

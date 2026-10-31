@@ -603,8 +603,6 @@ fn type_name(t: ObjType) -> &'static str {
         ObjType::Port => "port",
         ObjType::Quota => "quota",
         ObjType::Serial => "serial",
-        ObjType::Mmio => "mmio",
-        ObjType::Irq => "irq",
     }
 }
 

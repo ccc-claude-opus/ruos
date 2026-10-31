@@ -4,9 +4,9 @@
 [workspace]
 resolver = "3"
 members = [
-    "ruos", "podimg", "abi", "libsys", "objstore", "virtio", "services/blk", "services/net",
+    "ruos", "podimg", "abi", "libsys", "objstore",
     "services/init", "services/store", "services/console", "services/shell", "services/dock",
-    "services/overlay", "services/wasmrt", "apps/writer",
+    "services/overlay", "apps/writer",
     "apps/hello", "apps/snoop", "apps/fault", "apps/ktest", "apps/peer", "apps/hog", "apps/bench", "apps/worker", "apps/echo", "apps/greet", "apps/site", "services/kube",
 ]
 default-members = ["ruos", "podimg", "objstore"]

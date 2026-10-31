@@ -176,15 +176,6 @@ pub fn task_exited(a: &AddrSpace) {
     a.charge.lock().take();
 }
 
-/// Threads have no kernel-side state on wasm32.
-pub struct ThreadArch;
-
-impl ThreadArch {
-    pub fn new(_s: &Start) -> Result<ThreadArch, Error> {
-        Ok(ThreadArch)
-    }
-}
-
 pub fn user_addr_ok(va: u64) -> bool {
     va <= u32::MAX as u64
 }

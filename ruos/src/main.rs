@@ -1,12 +1,12 @@
 //! ruos: a capability microkernel teaching OS with Docker-like pods. This
 //! program is its host side: it serves the web page (with the
 //! cross-origin isolation headers SharedArrayBuffer needs) and the wasm
-//! kernel, keeps the image registry, is the other end of every machine's
-//! remote channel, and boots the QEMU machines. A release carries all of
-//! that inside (assets.rs); HTTP is `tiny_http`, the WebSocket `tungstenite`.
+//! kernel, keeps the image registry, and is the other end of every
+//! machine's remote channel: the OS runs in the browser, this is the
+//! backend on the desktop OS. A release carries all of that inside
+//! (assets.rs); HTTP is `tiny_http`, the WebSocket `tungstenite`.
 //!
 //!   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
-//!   ruos riscv64 | aarch64 [--smp N]     the OS in QEMU (qemu-system-* needed)
 //!   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
 //!                                        the server alone (development: run.sh, test.sh)
 //!
@@ -66,21 +66,20 @@ struct Config {
 
 const USAGE: &str = "usage:
   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
-  ruos riscv64 | aarch64 [--smp N]     the OS in QEMU (qemu-system-riscv64 / -aarch64 needed)
   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
              [--fn-port N] [--no-http] [--http-allow ADDR:PORT]...";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = match args.first().map(String::as_str) {
-        Some("web" | "serve" | "riscv64" | "aarch64") => args.remove(0),
+        Some("web" | "serve") => args.remove(0),
         Some("-h" | "--help") => usage(""),
         _ => String::from("web"),
     };
     let mut port = if cmd == "serve" { 8780u16 } else { 8780 };
     let mut bind = "127.0.0.1".to_string();
     let mut cfg = Config { web: None, kernel: None, store: None };
-    let (mut open, mut smp) = (true, 4u32);
+    let mut open = true;
     let mut http = http::Settings { enabled: true, allow: Vec::new() };
     let mut fn_port = None;
     let mut it = args.into_iter();
@@ -92,11 +91,10 @@ fn main() {
             "--web" if cmd == "serve" => cfg.web = Some(PathBuf::from(val())),
             "--kernel" if cmd == "serve" => cfg.kernel = Some(PathBuf::from(val())),
             "--no-http" => http.enabled = false,
-            "--fn-port" if cmd != "riscv64" && cmd != "aarch64" => fn_port = Some(val().parse().unwrap_or_else(|_| usage("bad --fn-port"))),
+            "--fn-port" => fn_port = Some(val().parse().unwrap_or_else(|_| usage("bad --fn-port"))),
             "--http-allow" => http.allow.push(val().parse().unwrap_or_else(|_| usage("bad --http-allow (ADDR:PORT)"))),
             "--store" if cmd == "serve" => cfg.store = Some(PathBuf::from(val())),
             "--no-open" if cmd == "web" => open = false,
-            "--smp" if cmd != "serve" && cmd != "web" => smp = val().parse().unwrap_or_else(|_| usage("bad --smp")),
             "-h" | "--help" => usage(""),
             _ => usage(&format!("unknown argument {a}")),
         }
@@ -117,21 +115,14 @@ fn main() {
     let home = home();
     let store = install(&home);
     let cfg = Config { web: None, kernel: None, store: Some(store) };
-    if cmd == "web" {
-        let server = listen(&bind, port);
-        functions(&bind, fn_port.unwrap_or(port.saturating_add(10)), cfg.store.clone());
-        let url = format!("http://{}/", server.server_addr());
-        println!("ruos: the OS is at {url} (Ctrl-C stops it); data in {}", home.display());
-        if open {
-            open_browser(&url);
-        }
-        return run_server(server, cfg);
+    let server = listen(&bind, port);
+    functions(&bind, fn_port.unwrap_or(port.saturating_add(10)), cfg.store.clone());
+    let url = format!("http://{}/", server.server_addr());
+    println!("ruos: the OS is at {url} (Ctrl-C stops it); data in {}", home.display());
+    if open {
+        open_browser(&url);
     }
-    // QEMU: the server on a free port, the machine reaches it as 10.0.2.100:80.
-    let server = listen("127.0.0.1", 0);
-    let addr = server.server_addr().to_string();
-    thread::spawn(move || run_server(server, cfg));
-    std::process::exit(qemu(&cmd, &home, &addr, smp));
+    run_server(server, cfg)
 }
 
 fn usage(msg: &str) -> ! {
@@ -339,43 +330,6 @@ fn open_browser(url: &str) {
     };
     if cmd.is_err() {
         println!("ruos: open {url} in a browser");
-    }
-}
-
-/// Boots `arch` in QEMU with the kernel the binary carries, a 16 MiB disk
-/// (kept in HOME) and the user network, which forwards 10.0.2.100:80 to
-/// the server at `addr`. Returns QEMU's exit code.
-fn qemu(arch: &str, home: &Path, addr: &str, smp: u32) -> i32 {
-    let Some(kernel) = assets::get(&format!("kernel-{arch}.bin")) else {
-        eprintln!("ruos: this build has no {arch} kernel");
-        return 1;
-    };
-    let kfile = home.join(format!("kernel-{arch}.bin"));
-    let disk = home.join(format!("disk-{arch}.img"));
-    let ok = fs::write(&kfile, kernel).is_ok() && (disk.exists() || fs::write(&disk, vec![0u8; 16 << 20]).is_ok());
-    if !ok {
-        eprintln!("ruos: cannot write to {}", home.display());
-        return 1;
-    }
-    let mut c = std::process::Command::new(format!("qemu-system-{arch}"));
-    c.args(["-machine", "virt", "-m", "256M", "-nographic", "-smp", &smp.to_string()]);
-    if arch == "riscv64" {
-        c.args(["-bios", "default"]);
-    } else {
-        c.args(["-cpu", "cortex-a72"]);
-    }
-    c.arg("-kernel").arg(&kfile);
-    c.args(["-global", "virtio-mmio.force-legacy=false"]);
-    c.arg("-drive").arg(format!("file={},if=none,format=raw,id=hd", disk.display()));
-    c.args(["-device", "virtio-blk-device,drive=hd"]);
-    c.args(["-netdev", &format!("user,id=n0,guestfwd=tcp:10.0.2.100:80-tcp:{addr}"), "-device", "virtio-net-device,netdev=n0"]);
-    println!("ruos: booting {arch} in QEMU (Ctrl-A x quits)");
-    match c.status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("ruos: qemu-system-{arch}: {e} (is QEMU installed?)");
-            1
-        }
     }
 }
 

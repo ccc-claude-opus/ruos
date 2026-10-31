@@ -27,7 +27,6 @@ pub struct Channel {
 
 impl Channel {
     /// Messages waiting to be read here.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn queued(&self) -> usize {
         self.queue.lock().len()
     }
@@ -49,7 +48,6 @@ impl Channel {
 
     /// An endpoint whose peer is the host: its messages leave through
     /// `arch::remote_send`, the host's arrive through `deliver`.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn remote(i: u8) -> Arc<Channel> {
         Arc::new(Channel {
             peer: IrqLock::new(Weak::new()),
@@ -64,7 +62,6 @@ impl Channel {
     }
 
     /// A message from the host.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn deliver(&self, data: Vec<u8>) {
         self.queue.lock().push_back(Msg { data, handles: Vec::new() });
         self.sig.update(0, signal::READABLE);

@@ -153,7 +153,7 @@ export class ClusterView {
       }
       out.push(t);
     } else {
-      out.push(el('p', { class: 'hint' }, '還沒有 Deployment。試試第 11 課：kube apply kube/web.toml'));
+      out.push(el('p', { class: 'hint' }, '還沒有 Deployment。試試第 10 課：kube apply kube/web.toml'));
     }
 
     if (fns.length) {

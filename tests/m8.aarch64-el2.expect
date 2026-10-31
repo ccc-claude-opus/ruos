@@ -1,2 +1,0 @@
-^smp: 4 cpus
-^writer: / has bin, data, etc; /etc has 0 entries$

@@ -1,11 +1,11 @@
 [package]
 name = "ruos"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/ccc-claude-opus/ruos"
-description = "A capability microkernel teaching OS with Docker-like pods, in the browser (WebAssembly) or QEMU (RISC-V, ARM)"
+description = "A capability microkernel teaching OS with Docker-like pods: the OS runs in the browser (WebAssembly), this is its server on your desktop"
 readme = "README.md"
 keywords = ["os", "kernel", "capability", "wasm", "education"]
 categories = ["command-line-utilities", "wasm"]

@@ -4,5 +4,5 @@
 ^ktest: store ok \([0-9]+ images, hello is [0-9]+ bytes\)$
 ^M4 OK$
 ^(/[^ ]* )?\$ images$
-^hello:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$
-^store:latest +[0-9a-f]{12}  riscv64,aarch64,wasm32$
+^hello:latest +[0-9a-f]{12}  wasm32$
+^store:latest +[0-9a-f]{12}  wasm32$

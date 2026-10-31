@@ -1,22 +1,7 @@
 //! Kernel heap: the `talc` allocator behind a lock that masks interrupts.
 //! Natively it is a static arena; on wasm32 it grows with `memory.grow`
 //! (memory objects are heap pages there, so they need the room).
-#[cfg(not(target_arch = "wasm32"))]
-mod imp {
-    use talc::TalcLock;
-    use talc::source::Claim;
 
-    use crate::sync::RawIrqLock;
-
-    const HEAP_SIZE: usize = 8 << 20;
-
-    static mut ARENA: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
-
-    #[global_allocator]
-    static HEAP: TalcLock<RawIrqLock, Claim> = TalcLock::new(unsafe { Claim::array(&raw mut ARENA) });
-}
-
-#[cfg(target_arch = "wasm32")]
 mod imp {
     use core::alloc::Layout;
 

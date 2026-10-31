@@ -1,4 +1,0 @@
-^paging: on \(4 KB granule, 4 levels, 8-bit ASIDs, TTBR1
-^trap: EL1 vectors at 0xffffffffc.* \(entered at EL1\)$
-^trap: breakpoint handled \(1 trap\)$
-^irq: GICv2 at 0x8000000, timer irq 27, uart irq 33$

@@ -117,18 +117,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '10. 同一份程式，三種機器',
-    text: [
-      '同一個核心跑在 RISC-V、ARM 與瀏覽器（WebAssembly）。映像可以帶好幾個架構的程式，dock 依機器挑一個。',
-      '只有 wasm32 版本的映像，在 RISC-V / ARM 上由 wasmrt（wasm 直譯器）執行；在瀏覽器裡，每個任務本來就是一個 WebAssembly instance 加一個 Worker。',
-    ],
-    steps: [
-      { cmd: 'image hello-wasm', note: '只有 wasm32' },
-      { cmd: 'dock run hello-wasm', note: '照樣能跑' },
-    ],
-  },
-  {
-    title: '11. 宣告想要的狀態（kube）',
+    title: '10. 宣告想要的狀態（kube）',
     text: [
       '`dock run` 是命令：「現在跑一個」。kube 則是宣告：寫下「想要兩個 worker 一直在跑」（一個 TOML manifest），kube 就不停比對實際狀態並修正：少了補、多了刪、掛了重啟。這就是 Kubernetes 的核心想法（reconcile loop）。',
       'kube 自己也只是一個程式：它手上只有一個 dock client（和映像庫），所有動作都是請 dock 去做。到右邊「叢集」頁看 pod 怎麼變。',
@@ -149,7 +138,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '12. Service 與 Config：沒有位址的網路',
+    title: '11. Service 與 Config：沒有位址的網路',
     text: [
       '`serves = "echo"` 的 pod 就是 service echo；`uses = ["echo"]` 的 pod 名稱空間裡才會有 `svc:echo`。要連線時，pod 建一條新的 channel，把一端經 `svc:echo` 交出去，kube 把它交給一個就緒的 echo pod（輪流），之後兩邊直接談。沒有 IP、沒有 DNS：沒拿到 `svc:echo` 的 pod 根本連不到。',
       'kube 每 2 秒 ping 一次提供服務的 pod：不回應就不再分到連線（readiness），太久沒回就重啟（liveness）。Config 的檔案和環境變數疊成映像上的一層；改了 Config 或範本，就會滾動更新：先多一個新 pod，它就緒了才刪一個舊的。',
@@ -172,7 +161,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '13. 叢集：很多台機器',
+    title: '12. 叢集：很多台機器',
     text: [
       '連到同一個 server 的機器就是一個叢集，每台機器是一個節點。在新分頁打開這個網址再加上 `?machine=b2`，就多了一台機器（自己的磁碟、自己的核心）。',
       '想要的狀態和每個 pod 的狀況都記在 server 上。其中一台機器的 kube 是 leader（靠租約：一直續約的那台），由它決定每個 pod 放哪個節點：活著的、架構合的、`node = "…"` 指定的、pod 最少的。每台機器的 kube 只跑分給自己的 pod。',
@@ -189,7 +178,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '14. 上網：curl 與 http 這個能力',
+    title: '13. 上網：curl 與 http 這個能力',
     text: [
       '瀏覽器裡的網頁不能隨便連到別的網站，所以由 server 代為連線：`curl` 把請求經 store 交給 server，server 連過去，再把回答傳回來。為了不讓網頁上的人透過它碰到 server 那邊的內網，server 不連 localhost、10.*、192.168.*、169.254.* 這類位址（轉址過去也不行）。',
       '能上網的也只有拿到 `http` 這個 capability 的程式：shell 有，`run` 啟動的程式要你明說才給。',
@@ -206,7 +195,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '15. 函式：請求來了才啟動（serverless）',
+    title: '14. 函式：請求來了才啟動（serverless）',
     text: [
       'AWS Lambda、Cloudflare Workers 這類 serverless：只交出一個函式，平台在請求來時才把它跑起來（冷啟動），忙了多開幾份，閒了收掉，最後一份都不留（scale to zero）。這就是「replicas 由請求決定、可以是 0」的 Deployment。',
       '在 ruos 裡，函式在收到請求的那台機器上跑，就像 Workers 在收到請求的據點執行。每個 instance 是一個新的 WebAssembly instance，所以冷啟動只要幾十 ms。函式是 stateless 的：instance 記憶體裡的東西不可靠，要保存就用 KV（`uses = ["kv:counter"]`），沒宣告的函式拿不到。到「叢集」頁看 instance 怎麼出現又消失。',
@@ -228,7 +217,7 @@ export const LESSONS = [
     ],
   },
   {
-    title: '16. 從外面呼叫函式（對外入口）',
+    title: '15. 從外面呼叫函式（對外入口）',
     text: [
       '`expose = true` 的函式有一個網址，在 ruos serve 的「函式埠」（預設是主埠加 10，例如 8790）。外面的請求先到 ruos serve，它挑一台機器（已經有這個函式 instance 的優先）把請求送進去，kube 交給 instance，回答再沿原路回去。沒有 expose 的函式，外面連不到。',
       '函式埠和這一頁是不同的 origin：函式回的網頁就是一個普通網站，但碰不到 OS 自己的連線。OS 跑在瀏覽器分頁裡，所以把所有分頁都關掉之後，網址會回 503：沒有機器可以處理請求。',

@@ -17,7 +17,6 @@ pub use abi::{
 
 mod raw;
 pub mod args;
-pub mod blk;
 pub mod console;
 pub mod dock;
 pub mod fmt;
@@ -29,13 +28,12 @@ mod heap;
 pub mod ipc;
 pub mod kube;
 pub mod kv;
-pub mod net;
 pub mod ns;
 pub mod store;
 pub mod svc;
 pub mod wire;
 
-pub use ipc::{Channel, Irq, Memory, Mmio, Port, Serial, wait_one};
+pub use ipc::{Channel, Memory, Port, Serial, wait_one};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
