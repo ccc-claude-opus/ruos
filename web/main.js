@@ -16,11 +16,12 @@ const tasks = new Map(); // id → task thread Worker (started for the kernel Wo
 // (ESC [ 2 J).
 let pending = '';
 let back = 0;
+let screen = ''; // the terminal's text (term shows it, with its URLs as links)
 const wide = (c) => /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]|[\u{20000}-\u{3fffd}]/u.test(c);
 function write(text) {
   let t = pending + text;
   pending = '';
-  let out = term.textContent;
+  let out = screen;
   for (let i = 0; i < t.length; ) {
     if (t[i] === '\x1b') {
       const m = t.slice(i).match(/^\x1b\[(\d*)([A-Za-z])/);
@@ -54,14 +55,32 @@ function write(text) {
       i++;
     }
   }
-  term.textContent = out;
+  screen = out;
+  show(out);
   term.scrollTop = term.scrollHeight;
+}
+
+// The text, with every http(s) URL a link that opens in a new tab (the
+// sites `kube get fn` lists, for one).
+const URL_RE = /https?:\/\/[^\s"'<>]+/g;
+function show(text) {
+  const f = document.createDocumentFragment();
+  let at = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    const url = m[0].replace(/[.,;:)\]}。，）]+$/u, '');
+    f.append(text.slice(at, m.index));
+    f.append(Object.assign(document.createElement('a'), { href: url, textContent: url, target: '_blank', rel: 'noopener noreferrer' }));
+    at = m.index + url.length;
+  }
+  f.append(text.slice(at));
+  term.replaceChildren(f);
 }
 
 function boot() {
   worker?.terminate();
   for (const w of tasks.values()) w.terminate();
   tasks.clear();
+  screen = '';
   term.textContent = '';
   pending = '';
   const iso = self.crossOriginIsolated ? 'cross-origin isolated' : 'not isolated (no SharedArrayBuffer)';
@@ -115,7 +134,11 @@ kbd.addEventListener('input', () => {
   if (kbd.value) send([...new TextEncoder().encode(kbd.value)]);
   kbd.value = '';
 });
-term.addEventListener('click', () => kbd.focus());
+// A click types again, unless it selected text (to copy) or was on a link.
+term.addEventListener('click', (e) => {
+  if (e.target.closest('a') || getSelection().toString()) return;
+  kbd.focus();
+});
 
 document.getElementById('reboot').onclick = boot;
 
