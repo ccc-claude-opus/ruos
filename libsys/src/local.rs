@@ -7,7 +7,8 @@
 //!
 //! Requests (text): `connect KIND:NAME` + a channel end → `ok` / `error WHY`
 //! (the end now speaks that protocol); `dup` + a channel end → `ok` (another
-//! client); `ls` → `KIND NAME [SIZE]` lines.
+//! client); `ls` → `KIND NAME [SIZE]` lines; `rm KIND:NAME` → `ok` /
+//! `error WHY` (everything kept for it is gone).
 use alloc::format;
 use alloc::string::String;
 
@@ -58,5 +59,14 @@ impl Local {
     /// What is kept: `KIND NAME [SIZE]` lines.
     pub fn list(&self) -> Result<String> {
         self.ask("ls", None)
+    }
+
+    /// Forgets `what` (`kv:NAME`, …) and everything kept for it.
+    pub fn remove(&self, what: &str) -> core::result::Result<(), String> {
+        let r = self.ask(&format!("rm {what}"), None).map_err(|e| format!("local: {e:?}"))?;
+        match r.strip_prefix("error ") {
+            Some(why) => Err(String::from(why)),
+            None => Ok(()),
+        }
     }
 }

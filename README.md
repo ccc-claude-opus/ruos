@@ -28,7 +28,7 @@ ruos                      # 啟動並在瀏覽器打開
 
 ```sh
 ./run.sh wasm             # 建置後開 http://127.0.0.1:8780（瀏覽器版）
-./run.sh dist             # 建全部並放進 ruos/assets（發布 ruos 套件用）
+./run.sh dist             # 建全部並放進 ruos/assets（發布 ruos 套件用）；build/release 要上傳到同版本的 GitHub release
 ./test.sh                 # 完整測試：主機端 crate + 瀏覽器版（Node 裡開機）
 cargo test --release      # 主機端 crate：objstore、podimg、ruos
 ```
@@ -199,7 +199,8 @@ shell 找程式的順序：內建指令 → `/bin/NAME` → 同名的映像。
 | `redis -d cache@local SET k v EX 60` | ruos 自己寫的小 Redis（字串、到期、list、hash、set） |
 | `kv put notes@local KEY VALUE` | KV namespace |
 | `sqlite3 music.db "SELECT …"` | SQLite 官方的命令列 shell（C，wasi-sdk 編的 WASI 程式；檔案在目前目錄） |
-| `local` | 這台機器自己存了什麼 |
+| `local`、`local rm sql:app` | 這台機器自己存了什麼；刪掉一個 |
+| `sql copy app app@local`、`kv copy notes notes@local` | 在後端與這台機器之間搬資料（反過來也可以） |
 | `run IMAGE sql:app@local` | 程式拿到的名字是 `sql:app`，分不出資料在哪裡 |
 
 kube 的 manifest 也一樣：`uses = ["sql:guestbook@local"]`。**程式一行都不用改**：它只認得名稱空間裡的 `sql:guestbook`，另一端是後端還是瀏覽器，由給它的人決定。不過意思不同：放在瀏覽器的資料只有這台機器看得到。設計見 [doc/storage.md](doc/storage.md)。

@@ -48,13 +48,15 @@ kube（宣告想要的狀態，kube 一直讓它成真；範例在 /home/kube）
   kube rollout status|history|undo NAME   kube call SERVICE TEXT（經 service 交給一個 pod，印出回答）
 函式（serverless：請求來了才啟動，閒置就收掉；kube apply 一個 kind = \"Function\"）
   fn call NAME [TEXT...]   fn ls（= kube get fn）
-  kv ls NS [PREFIX]   kv get NS KEY   kv put NS KEY VALUE...   kv rm NS KEY（KV namespace）
+  kv ls NS [PREFIX]   kv get NS KEY   kv put NS KEY VALUE...   kv rm NS KEY   kv copy FROM TO（KV namespace）
 後端的資料庫（在桌機的 ruos serve：SQLite、PostgreSQL、Redis）
   sql [-d DB] \"SELECT …\"（預設 DB 是 app；也可以接管線：cat x.sql | sql）
   redis [-d NAME] COMMAND ARGS...（預設 NAME 是 cache；要 ruos serve --redis cache=redis://…）
   名字加上 @local（sql -d app@local、redis -d cache@local、kv get notes@local K、run snoop sql:app@local）：
     資料放在這台機器（瀏覽器的 IndexedDB），不在伺服器；程式拿到的名字一樣，分不出來
-  local                 這台機器自己存了什麼（kv、redis、sql）
+  local [ls]            這台機器自己存了什麼（kv、redis、sql）   local rm KIND:NAME   刪掉它（例如 local rm sql:app）
+  sql copy FROM TO      把 SQLite 資料庫的表格與資料複製過去（例如 sql copy app app@local：後端 → 這台機器）
+  kv copy FROM TO       把 KV namespace 的每個 key 複製過去
 網路（由 server 代為連線；要有 http 這個 capability）
   curl [-i] [-I] [-s] [-f] [-X METHOD] [-H 'K: V'] [-d DATA] [-o FILE] URL
 ";
@@ -650,10 +652,7 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
         "kv" => sh.kv(&argv[1..]),
         "sql" => sh.sql(&argv[1..], input),
         "redis" => sh.redis(&argv[1..]),
-        "local" => match sh.local {
-            Some(l) => l.list().map(String::into_bytes).map_err(err("local")),
-            None => Err(String::from("this machine keeps nothing itself (no local storage)")),
-        },
+        "local" => sh.local_cmd(&argv[1..]),
         "handles" => Ok(handles().into_bytes()),
         "ns" => Ok(lines_out(ns::names().map(|n| format!("{:<10} handle {}", n, ns::get(n).map(|h| h.0).unwrap_or(0))))),
         "run" => {
@@ -676,6 +675,41 @@ pub fn run(sh: &mut Sh, argv: &[String], input: Option<Vec<u8>>) -> Out {
 }
 
 /// Unix seconds as a UTC date (days to a civil date: Howard Hinnant's algorithm).
+/// The rows of a JSON query answer (`{"columns": …, "rows": [[…]]}`).
+fn rows(db: &libsys::sql::Sql, sql: &str, params: &str) -> Result<Vec<Vec<serde_json::Value>>, String> {
+    let a = db.query(sql, params).map_err(|e| format!("{e:?}"))??;
+    let j: serde_json::Value = serde_json::from_str(&a).map_err(|_| String::from("bad answer"))?;
+    Ok(j["rows"].as_array().map(|r| r.iter().filter_map(|x| x.as_array().cloned()).collect()).unwrap_or_default())
+}
+
+fn copy_db(src: &libsys::sql::Sql, dst: &libsys::sql::Sql) -> Result<String, String> {
+    let schema = "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid";
+    let all = rows(src, schema, "[]")?;
+    let s = |r: &Vec<serde_json::Value>, i: usize| String::from(r.get(i).and_then(|v| v.as_str()).unwrap_or(""));
+    let tables: Vec<String> = all.iter().filter(|r| s(r, 0) == "table").map(|r| s(r, 1)).collect();
+    let have = rows(dst, "SELECT name FROM sqlite_master WHERE type = 'table'", "[]")?;
+    if let Some(t) = have.iter().map(|r| s(r, 0)).find(|t| tables.contains(t)) {
+        return Err(format!("the destination already has a table {t} (DROP it there first)"));
+    }
+    let run = |sql: &str, params: &str| dst.query(sql, params).map_err(|e| format!("{e:?}"))?.map(|_| ());
+    let mut n = 0;
+    for r in all.iter().filter(|r| s(r, 0) == "table") {
+        run(&s(r, 2), "[]")?;
+        let t = s(r, 1).replace('"', "\"\"");
+        let data = rows(src, &format!("SELECT * FROM \"{t}\""), "[]")?;
+        for row in &data {
+            let marks: Vec<String> = (1..=row.len()).map(|i| format!("?{i}")).collect();
+            run(&format!("INSERT INTO \"{t}\" VALUES ({})", marks.join(", ")), &serde_json::Value::Array(row.clone()).to_string())?;
+        }
+        n += data.len();
+    }
+    // Indexes, views and triggers once the rows are in.
+    for r in all.iter().filter(|r| s(r, 0) != "table") {
+        run(&s(r, 2), "[]")?;
+    }
+    Ok(format!("copied {} tables, {n} rows\n", tables.len()))
+}
+
 fn date(secs: u64) -> String {
     let (days, rem) = ((secs / 86400) as i64, secs % 86400);
     let z = days + 719468;
@@ -880,6 +914,11 @@ impl Sh {
     /// sql [-d DB] STATEMENT: a database of the backend (`DB@local`: of
     /// this machine), as a text table.
     fn sql(&mut self, argv: &[String], input: Option<Vec<u8>>) -> Out {
+        if let [c, from, to] = argv
+            && c == "copy"
+        {
+            return self.sql_copy(from, to);
+        }
         let (db, rest) = Self::backend_args(argv, "app");
         let stmt = if rest.is_empty() { text(&input.unwrap_or_default()) } else { rest.join(" ") };
         if stmt.trim().is_empty() {
@@ -923,13 +962,15 @@ impl Sh {
 
     /// kv ls|get|put|rm NS …: a KV namespace (the shell asks kube for it).
     fn kv(&mut self, argv: &[String]) -> Out {
-        let usage = "kv ls NS [PREFIX] | kv get NS KEY | kv put NS KEY VALUE... | kv rm NS KEY (NS@local: kept by this machine)";
+        let usage = "kv ls NS [PREFIX] | kv get NS KEY | kv put NS KEY VALUE... | kv rm NS KEY | kv copy FROM TO (NS@local: kept by this machine)";
         let [op, ns, rest @ ..] = argv else { return Err(String::from(usage)) };
-        let kv = libsys::kv::Kv(match ns.strip_suffix("@local") {
-            Some(base) => self.local.ok_or("this machine keeps nothing itself (no local storage)")?.connect(&format!("kv:{base}"))?,
-            None => self.kube_connect(&format!("kv:{ns}"))?,
-        });
+        let kv = self.kv_of(ns)?;
         let r = match (op.as_str(), rest) {
+            ("copy", [to]) => {
+                let r = self.kv_copy(&kv, to);
+                let _ = kv.0.close();
+                return r;
+            }
             ("ls", p) => kv.list(p.first().map_or("", String::as_str)).map(|ks| lines_out(ks)),
             ("get", [k]) => kv.get(k).map(|v| format!("{v}\n").into_bytes()),
             ("put", [k, v @ ..]) if !v.is_empty() => {
@@ -950,6 +991,70 @@ impl Sh {
             }
             e => format!("{e:?}"),
         })
+    }
+
+    /// KV namespace `ns` (`NS@local`: this machine's).
+    fn kv_of(&self, ns: &str) -> Result<libsys::kv::Kv, String> {
+        Ok(libsys::kv::Kv(match ns.strip_suffix("@local") {
+            Some(base) => self.local.ok_or("this machine keeps nothing itself (no local storage)")?.connect(&format!("kv:{base}"))?,
+            None => self.kube_connect(&format!("kv:{ns}"))?,
+        }))
+    }
+
+    /// kv copy FROM TO: every key of `from` into namespace `to` (keys it
+    /// already has are replaced).
+    fn kv_copy(&mut self, from: &libsys::kv::Kv, to: &str) -> Out {
+        let dst = self.kv_of(to)?;
+        let r = (|| -> libsys::Result<usize> {
+            let keys = from.list("")?;
+            for k in &keys {
+                dst.put(k, &from.get(k)?)?;
+            }
+            Ok(keys.len())
+        })();
+        let _ = dst.0.close();
+        r.map(|n| format!("copied {n} keys\n").into_bytes()).map_err(err("kv copy"))
+    }
+
+    /// sql copy FROM TO: the tables of SQLite database `from` (their rows,
+    /// then their indexes, views and triggers) into `to`, which must not
+    /// have tables of the same names. Either may be `NAME@local`; this is
+    /// how data moves between this machine and the server.
+    fn sql_copy(&mut self, from: &str, to: &str) -> Out {
+        let (sb, sname, sown) = self.place("sql", from)?;
+        let (db, dname, down) = match self.place("sql", to) {
+            Ok(p) => p,
+            Err(e) => {
+                if sown {
+                    let _ = sb.0.close();
+                }
+                return Err(e);
+            }
+        };
+        let r = copy_db(&libsys::sql::Sql::with(sb.clone(), &sname), &libsys::sql::Sql::with(db.clone(), &dname));
+        for (b, own) in [(sb, sown), (db, down)] {
+            if own {
+                let _ = b.0.close();
+            }
+        }
+        r.map(String::into_bytes).map_err(|e| {
+            self.status = 1;
+            e
+        })
+    }
+
+    /// local [ls] | local rm KIND:NAME.
+    fn local_cmd(&mut self, argv: &[String]) -> Out {
+        let l = self.local.ok_or("this machine keeps nothing itself (no local storage)")?;
+        match argv {
+            [] => l.list().map(String::into_bytes).map_err(err("local")),
+            [ls] if ls == "ls" => l.list().map(String::into_bytes).map_err(err("local")),
+            [rm, what] if rm == "rm" => l.remove(what).map(|_| Vec::new()).map_err(|e| {
+                self.status = 1;
+                e
+            }),
+            _ => Err(String::from("local [ls] | local rm KIND:NAME (kv:NAME, redis:NAME, sql:NAME, fs:NAME)")),
+        }
     }
 
     /// kube: `apply` sends the files' text; the rest goes as it is.

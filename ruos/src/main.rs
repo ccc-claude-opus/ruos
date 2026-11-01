@@ -10,7 +10,8 @@
 //!   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
 //!                                        the server alone (development: run.sh, test.sh)
 //!
-//! Registry (a podimg store directory):
+//! Registry (a podimg store directory; objects it lists in `upstream` but
+//! lacks are fetched from `--upstream URL`, upstream.rs):
 //!   GET /v1/blobs/ID        object bytes; cached forever (content addressed)
 //!   GET /v1/refs/NAME/TAG   the image index id
 //!   GET /v1/refs            `NAME:TAG ID` lines
@@ -62,6 +63,7 @@ mod http;
 mod ingress;
 mod id;
 mod remote;
+mod upstream;
 
 static SESSIONS: AtomicU64 = AtomicU64::new(1);
 
@@ -77,7 +79,8 @@ const USAGE: &str = "usage:
   ruos [web] [--port N] [--no-open]    the OS in the browser (the default)
   ruos serve [--port N] [--bind ADDR] [--web DIR] [--kernel FILE] [--store DIR]
              [--fn-port N] [--no-http] [--http-allow ADDR:PORT]...
-             [--sql NAME=sqlite:PATH|postgres://…]... [--redis NAME=redis://HOST:PORT/]...";
+             [--sql NAME=sqlite:PATH|postgres://…]... [--redis NAME=redis://HOST:PORT/]...
+             [--upstream URL|none]   where images the registry lists but lacks come from";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -93,6 +96,7 @@ fn main() {
     let mut http = http::Settings { enabled: true, allow: Vec::new() };
     let mut fn_port = None;
     let mut services = backend::Settings { sql: Vec::new(), redis: Vec::new() };
+    let mut up = Some(upstream::DEFAULT.to_string());
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| usage(&format!("{a} needs a value")));
@@ -108,6 +112,7 @@ fn main() {
                 let l = if a == "--sql" { &mut services.sql } else { &mut services.redis };
                 l.push((n.to_string(), u.to_string()));
             }
+            "--upstream" => up = Some(val()).filter(|u| u != "none"),
             "--fn-port" => fn_port = Some(val().parse().unwrap_or_else(|_| usage("bad --fn-port"))),
             "--http-allow" => http.allow.push(val().parse().unwrap_or_else(|_| usage("bad --http-allow (ADDR:PORT)"))),
             "--store" if cmd == "serve" => cfg.store = Some(PathBuf::from(val())),
@@ -118,6 +123,7 @@ fn main() {
     }
     http::configure(http);
     backend::configure(services);
+    upstream::configure(up);
     let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
         eprintln!("ruos: tokio: {e}");
         std::process::exit(1)
@@ -327,7 +333,7 @@ fn install(home: &Path) -> PathBuf {
     for (name, data) in assets::all().iter() {
         let Some(rel) = name.strip_prefix("store/") else { continue };
         let p = store.join(rel);
-        if p.exists() && !(new_version && rel.starts_with("refs/")) {
+        if p.exists() && !(new_version && (rel.starts_with("refs/") || rel == "upstream")) {
             continue;
         }
         if let Some(d) = p.parent() {
@@ -500,7 +506,7 @@ fn registry(cfg: &Config, r: &str) -> Option<(Vec<u8>, bool)> {
     let store = cfg.store.as_ref()?;
     let parts: Vec<&str> = r.split('/').collect();
     match parts.as_slice() {
-        ["blobs", id] if hex_id(id) => fs::read(store.join("objects").join(id)).ok().map(|b| (b, true)),
+        ["blobs", id] if hex_id(id) => upstream::object(store, &id::Id::parse(id)?).and_then(|p| fs::read(p).ok()).map(|b| (b, true)),
         ["refs", name, tag] if name_ok(name) && name_ok(tag) => {
             fs::read(store.join("refs").join(name).join(tag)).ok().map(|b| (b, false))
         }

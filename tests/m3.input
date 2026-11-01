@@ -238,6 +238,17 @@ sql -d app@local "SELECT * FROM nope"
 run snoop console sql:app@local
 sql -d No@local "SELECT 1"
 local
+sql copy app@local app2
+sql -d app2 "SELECT who || '=' || n AS x FROM t ORDER BY n"
+sql copy app@local app2
+sql copy app2 back@local
+sql -d back@local "SELECT 'rows=' || COUNT(*) AS c FROM t"
+local rm sql:back
+local rm sql:back
+kv copy notes@local tmp@local
+kv get tmp@local k1
+local rm kv:tmp
+kv get tmp@local k1
 sqlite3 music.db "CREATE TABLE songs (title TEXT, plays INTEGER); INSERT INTO songs VALUES ('a', 7), ('b', 8);"
 sqlite3 -box music.db "SELECT title, plays FROM songs ORDER BY plays DESC"
 echo "SELECT sum(plays) AS total FROM songs;" | sqlite3 music.db

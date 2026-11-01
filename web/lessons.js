@@ -284,6 +284,8 @@ export const LESSONS = [
       { cmd: 'sed \'s/sql:guestbook/sql:guestbook@local/; s/name = "guestbook"/name = "lguest"/\' kube/app-guestbook.toml > /tmp/lguest.toml; cat /tmp/lguest.toml', note: '同一個留言板，只改 uses' },
       { cmd: 'kube apply /tmp/lguest.toml; kube get fn', note: '打開 lguest 的網址留言：留言存在這個瀏覽器' },
       { cmd: 'sql -d guestbook@local "SELECT * FROM notes"', note: '重新整理頁面（重開機）後資料還在' },
+      { cmd: 'sql copy app@local moved; sql -d moved "SELECT * FROM t"', note: '改變主意：把資料從瀏覽器搬到後端' },
+      { cmd: 'local rm sql:app; local', note: '刪掉這台機器的那一份' },
     ],
   },
 ];

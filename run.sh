@@ -3,7 +3,8 @@
 #   ./run.sh wasm [port]                        build, then serve the OS (open the URL it prints)
 #   ./run.sh build                              build only (build/kernel.wasm, build/images, build/extra, build/store)
 #   ./run.sh dist                               build everything into ruos/assets
-#                                               (what `cargo install ruos` carries)
+#                                               (what `cargo install ruos` carries) and
+#                                               build/release (upload to the release page)
 #   ./run.sh publish [cargo publish args]       dist, then publish the ruos crate
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -90,7 +91,7 @@ build_images() {
     build_user
     build_wasi
     (cd "$ROOT" && cargo build --release --quiet -p podimg)
-    rm -rf "$OUT/images" "$OUT/extra"
+    rm -rf "$OUT/images" "$OUT/extra" "$OUT/upstream"
     local pf
     for pf in "$ROOT"/services/*/Podfile*.toml "$ROOT"/apps/*/Podfile*.toml; do
         case $pf in */apps/webapps/*) continue ;; esac
@@ -101,16 +102,20 @@ build_images() {
     for pf in "$ROOT"/apps/webapps/Podfile*.toml; do
         "$ROOT/target/release/podimg" build "$pf" --store "$OUT/extra" --programs "wasm32=$OUT/user-wasm32" > /dev/null
     done
+    # Too big for the crate: a release carries their refs, and the server
+    # fetches their objects from the release page when first asked
+    # (ruos/src/upstream.rs).
     for x in sqlited sqlite3; do
         if [ -f "$OUT/user-wasm32/$x.wasm" ]; then
-            "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/$x/Podfile.toml" --store "$OUT/extra" --programs "wasm32=$OUT/user-wasm32" > /dev/null
+            "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/$x/Podfile.toml" --store "$OUT/upstream" --programs "wasm32=$OUT/user-wasm32" > /dev/null
         fi
     done
     if [ -f "$OUT/wasi-tools/coreutils.wasm" ]; then
         "$ROOT/target/release/podimg" build "$ROOT/wasi-programs/coreutils/Podfile.toml" --store "$OUT/extra" --programs "wasm32=$OUT/wasi-tools" > /dev/null
     fi
     mkdir -p "$OUT/store"
-    cp -R "$OUT/images/." "$OUT/extra/." "$OUT/store/"
+    mkdir -p "$OUT/upstream"
+    cp -R "$OUT/images/." "$OUT/extra/." "$OUT/upstream/." "$OUT/store/"
 }
 
 build() {
@@ -144,7 +149,22 @@ case $cmd in
         cp "$OUT/kernel.wasm" "$a/"
         cp -R "$OUT/images" "$a/store"
         cp -R "$OUT/extra/." "$a/store/"
-        du -sh "$a" ;;
+        # The upstream images: refs here, objects on the release page.
+        rel="$OUT/release"
+        rm -rf "$rel"
+        mkdir -p "$rel"
+        [ -d "$OUT/upstream/refs" ] && cp -R "$OUT/upstream/refs/." "$a/store/refs/"
+        : > "$a/store/upstream"
+        for o in "$OUT"/upstream/objects/*; do
+            [ -f "$o" ] || continue
+            [ -f "$a/store/objects/$(basename "$o")" ] && continue
+            basename "$o" >> "$a/store/upstream"
+            cp "$o" "$rel/"
+        done
+        du -sh "$a"
+        v=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/ruos/Cargo.toml")
+        echo "upload the $(ls "$rel" | wc -l | tr -d ' ') files of build/release to the release v$v:"
+        echo "  gh release upload v$v build/release/*" ;;
     publish)
         # The assets are build output, ignored by git, so cargo calls the
         # tree dirty: check that everything else is committed first.

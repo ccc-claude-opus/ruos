@@ -12,3 +12,4 @@ bench = false
 [dependencies]
 libsys = { path = "../../libsys" }
 objstore = { path = "../../objstore" }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }

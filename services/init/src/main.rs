@@ -12,7 +12,7 @@ extern crate alloc;
 use libsys::console::Console;
 use libsys::ns::Namespace;
 use libsys::store::Store;
-use libsys::{Channel, Handle, Memory, ObjType, Quota, println};
+use libsys::{Channel, Handle, Memory, Quota, println};
 use objstore::Pack;
 
 libsys::entry!(main);
@@ -31,35 +31,26 @@ fn from_pack(pack: &Pack, name: &str, ns: Namespace) -> Option<Channel> {
 /// The store service, started straight from the pack: the store, its `web`
 /// client (the backend capability: http, sql:NAME, redis:NAME), the ingress channel
 /// from the server (for kube) and the browser's storage (for local).
-fn start_store(pack_mem: Memory) -> Option<(Store, Channel, Option<Channel>, Option<Channel>)> {
+/// `have`: which of the host's channels the kernel gave (bit 0 the server
+/// connection, 1 ingress, 2 the storage), as handles 3, 4, ... in that order.
+fn start_store(pack_mem: Memory, have: usize) -> Option<(Store, Channel, Option<Channel>, Option<Channel>)> {
     let size = pack_mem.size().ok()?;
     let mut bytes = alloc::vec![0u8; size as usize];
     pack_mem.read(0, &mut bytes).ok()?;
     let pack = Pack::parse(&bytes, false).ok()?;
     let mut ns = Namespace::new();
-    let (mut ingress, mut storage) = (None, None);
-    let mut have_remote = false;
-    // The server's channels follow the quota.
-    let mut found = alloc::vec::Vec::new();
-    for h in 3..64 {
-        match Handle(h).info() {
-            Ok((t, _)) => found.push((h, t)),
-            Err(_) => break,
-        }
+    let mut next = 3;
+    let mut take = |bit: usize| {
+        (have & (1 << bit) != 0).then(|| {
+            next += 1;
+            Channel(Handle(next - 1))
+        })
+    };
+    if let Some(r) = take(0) {
+        ns = ns.add("remote", r.0);
     }
-    for (h, t) in found {
-        match t {
-            // The server connection first (the store's), then ingress
-            // (kube's), then the browser's storage (local's).
-            ObjType::Channel if !have_remote => {
-                ns = ns.add("remote", Handle(h));
-                have_remote = true;
-            }
-            ObjType::Channel if ingress.is_none() => ingress = Some(Channel(Handle(h))),
-            ObjType::Channel => storage = Some(Channel(Handle(h))),
-            _ => {}
-        }
-    }
+    let ingress = take(1);
+    let storage = take(2);
     let (web, web_srv) = Channel::create().ok()?;
     from_pack(&pack, "store", ns.add("pack", pack_mem.0).add("web", web_srv.0)).map(|c| (Store(c), web, ingress, storage))
 }
@@ -71,8 +62,8 @@ fn console_client(con: &Console) -> Option<Handle> {
     Some(a.0)
 }
 
-fn main(_arg: usize) -> i64 {
-    let Some((store, web, ingress, storage)) = start_store(Memory(Handle(1))) else {
+fn main(have: usize) -> i64 {
+    let Some((store, web, ingress, storage)) = start_store(Memory(Handle(1)), have) else {
         println!("init: cannot start the store");
         return 1;
     };

@@ -374,6 +374,20 @@ impl Files {
         self.write_at(s, p, 0, data);
     }
 
+    /// Removes `p` and everything under it (`/`: the whole tree). False if
+    /// there was nothing.
+    pub fn remove(&mut self, s: &Storage, p: &str) -> bool {
+        let all: Vec<String> = if p == "/" {
+            self.tree.keys().cloned().collect()
+        } else {
+            self.subtree(p).into_iter().map(|(k, _)| k).collect()
+        };
+        for k in all.iter().rev() {
+            self.unset(s, k);
+        }
+        !all.is_empty()
+    }
+
     /// Names and sizes of the files directly in `d`.
     pub fn files_in(&self, d: &str) -> Vec<(String, u64)> {
         self.children(d).into_iter().filter_map(|(n, x)| match x {

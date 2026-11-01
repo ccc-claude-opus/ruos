@@ -1,0 +1,7 @@
+local
+kv get notes@local k1
+redis -d c@local GET greeting
+kv put off@local a 1
+kv get off@local a
+sql -d app@local "SELECT 1"
+exit 0

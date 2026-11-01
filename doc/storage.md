@@ -33,6 +33,19 @@ flowchart LR
 
 shell 也一樣：`sql -d app@local`、`redis -d cache@local`、`kv get notes@local KEY`、`run snoop console sql:app@local`。
 
+### 搬資料、刪資料
+
+位置是部署時的選擇，所以也要能改變主意：
+
+| 指令 | 做什麼 |
+|---|---|
+| `sql copy app app@local` | 後端的 `app` 複製到這台機器（反過來 `sql copy app@local app`） |
+| `kv copy notes notes@local` | KV namespace 的每個 key 複製過去（已有的 key 被覆蓋） |
+| `local` / `local ls` | 這台機器存了什麼 |
+| `local rm sql:app` | 刪掉這台機器的 `sql:app`（`kv:`、`redis:`、`fs:` 也一樣） |
+
+`sql copy` 只用 `sql:NAME` 這個 capability 本身，不碰檔案：讀來源的 `sqlite_master`，在目的地建表格、一列一列 `INSERT … VALUES (?1, ?2, …)`，最後才建 index、view、trigger。目的地已經有同名的表格，就在寫入任何東西之前拒絕。所以它不在乎哪一邊在前端、哪一邊在後端。限制：只認得 SQLite（PostgreSQL 沒有 `sqlite_master`）；BLOB 在後端的 JSON 回答裡只是 `"(N bytes)"`，複製不過去。Redis 是快取，沒有 copy。
+
 ## 架構
 
 ```mermaid
@@ -63,7 +76,7 @@ flowchart TB
 
 瀏覽器用 IndexedDB（資料庫 `ruos-local-MACHINE`；Worker 裡沒有 localStorage，而且 localStorage 只能存字串、約 5 MB、是同步的），Node 測試用檔案（`build/local/MACHINE/`，檔名是 key 的 hex）。IndexedDB 是非同步的，剛好合用：remote channel 本來就是「送出去、之後回來」。
 
-核心把它交給 init 當 handle 5（只有在有 server 連線時：init 依順序分辨 3、4、5）。
+核心把有的 channel 依序交給 init（server 連線、ingress、本機儲存，從 handle 3 開始），並在 init 的 `main(arg)` 告訴它有哪幾條（bit i = remote channel i）。所以**沒有 server 也有本機儲存**：伺服器關了、或網頁不是由 ruos serve 提供時，`kv:X@local`、`redis:X@local` 照樣能用。`sql:X@local` 不行：sqlited 的映像要從 server 的 registry 拉（測試：`tests/offline.*`，第三次開機，不連 server）。
 
 ### 2. `local` 服務
 
@@ -94,7 +107,7 @@ SQLite 是 C 寫的。官方給瀏覽器的 `sqlite3.wasm` 是 Emscripten 版，
 
 另外，SQLite **官方的命令列 shell**（amalgamation 的 `shell.c` + `sqlite3.c`，只加一個回傳失敗的 `system()`：WASI 沒有行程）也用 wasi-sdk 編成映像 `sqlite3`：在 ruos 的 shell 裡打 `sqlite3 music.db "SELECT …"`，或不給 SQL 進入互動模式。它的檔案就是 shell 的目前目錄（和其他 WASI 程式一樣），所以資料庫檔案在 pod 的可寫層（後端）；`sql:NAME@local` 的才在瀏覽器。
 
-`local` 是事件驅動的：等 sqlited 回答時，它照樣服務 sqlited 自己的檔案請求（不然會互相等待）。每個資料庫一個 sqlited，第一次用時啟動；它結束了（例如 trap），等待中的請求得到錯誤，下一個請求再啟動一個新的。sqlited 的映像只放在 registry（1.1 MB），第一次用時拉。
+`local` 是事件驅動的：等 sqlited 回答時，它照樣服務 sqlited 自己的檔案請求（不然會互相等待）。每個資料庫一個 sqlited，第一次用時啟動；它結束了（例如 trap），等待中的請求得到錯誤，下一個請求再啟動一個新的。sqlited 的映像只放在 registry（1.1 MB），第一次用時拉。發布的 crate 也不帶它們的物件（只帶 refs 與物件 id 的清單 `store/upstream`）：`ruos` 第一次被問到時，從同版本的 GitHub release 下載、驗 BLAKE3 再存起來（`ruos/src/upstream.rs`，`--upstream URL|none`）。
 
 ### 4. ruos 自己的小 Redis
 
@@ -120,4 +133,5 @@ SQLite 是 C 寫的。官方給瀏覽器的 `sqlite3.wasm` 是 Emscripten 版，
 - 沒有交易保證：fs 的區塊是一個一個寫進 IndexedDB 的，寫到一半關掉分頁，資料庫檔案可能不完整。
 - `redis:NAME@local` 每次修改都整份寫回；大的快取會慢。
 - sqlited 的記憶體（它自己的 linear memory）沒有記入 quota，和其他 WASI 程式一樣。
-- 本機儲存只在有 server 連線時存在（init 依順序分辨 handle）。
+- 沒有 server 時沒有 `sql:NAME@local`（sqlited 的映像在 registry）。
+- `sql copy` 只限 SQLite，也不複製 BLOB。

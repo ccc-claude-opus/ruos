@@ -138,8 +138,8 @@ export async function bootKernel(wasm, io) {
       kmem().set(new Uint8Array(m.buffer, va, len), dst);
       return 0;
     },
-    // Local storage only with a server: init tells the channels apart by order.
-    remote_open: (i) => (io.remoteUrl && (i <= 1 || (i === 2 && io.localStore)) ? 1 : 0),
+    // The server's two channels with a server; the storage with or without.
+    remote_open: (i) => ((i <= 1 ? io.remoteUrl : i === 2 && io.localStore) ? 1 : 0),
     remote_send(i, p, len) {
       [remote, ingress, local][i]?.send(kmem().slice(p, p + len));
     },
@@ -153,17 +153,17 @@ export async function bootKernel(wasm, io) {
   };
   const r = await WebAssembly.instantiate(wasm, { env });
   inst = r.instance || r;
+  const deliver = (i) => (b) => {
+    kmem().set(b, inst.exports.kernel_remote_buf());
+    enter(() => inst.exports.kernel_remote(i, b.length));
+  };
   if (io.remoteUrl) {
-    const deliver = (i) => (b) => {
-      kmem().set(b, inst.exports.kernel_remote_buf());
-      enter(() => inst.exports.kernel_remote(i, b.length));
-    };
     // One session for both: the server knows they are the same machine.
     const session = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
     remote = remoteLink(io.remoteUrl, session, io, deliver(0));
     ingress = ingressLink(io.remoteUrl, session, deliver(1));
-    if (io.localStore) local = localLink(io.localStore, deliver(2));
   }
+  if (io.localStore) local = localLink(io.localStore, deliver(2));
   const mem = inst.exports.memory;
   const dtb = wasmMachine({ memoryBytes: mem.buffer.byteLength, host: io.host || 'browser' });
   new Uint8Array(mem.buffer, inst.exports.kernel_dtb_buf(), dtb.length).set(dtb);

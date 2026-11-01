@@ -202,7 +202,7 @@ impl Session {
             }
             OBJ_SIZE => {
                 let f = decode(msg, 1).map(|(_, f)| text(f[0]).to_string()).unwrap_or_default();
-                Ok(match Id::parse(&f).and_then(|id| fs::metadata(self.store.join("objects").join(id.to_string())).ok()) {
+                Ok(match Id::parse(&f).and_then(|id| crate::upstream::object(&self.store, &id)).and_then(|p| fs::metadata(p).ok()) {
                     Some(m) => reply(OK, format!("{}", m.len()).as_bytes()),
                     None => reply(NOT_FOUND, b""),
                 })
@@ -211,7 +211,7 @@ impl Session {
                 use std::io::{Read, Seek, SeekFrom};
                 let f = decode(msg, 3).unwrap().1;
                 let (off, len) = (num(f[1]), num(f[2]).min(60000));
-                match Id::parse(text(f[0])).map(|id| self.store.join("objects").join(id.to_string())) {
+                match Id::parse(text(f[0])).map(|id| crate::upstream::object(&self.store, &id).unwrap_or_else(|| self.store.join("objects").join(id.to_string()))) {
                     Some(p) => (|| -> std::io::Result<Vec<u8>> {
                         let mut fh = match fs::File::open(&p) {
                             Ok(fh) => fh,

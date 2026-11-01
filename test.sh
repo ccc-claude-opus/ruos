@@ -3,7 +3,8 @@
 # on a fresh disk by web/test/boot.mjs, which starts its own server:
 #   boot 1: tests/m3.input is typed into the shell; the log must match every
 #           tests/mN.expect (and tests/mN.wasm.expect), teach.expect, shell.expect;
-#   boot 2: tests/boot2.input; tests/boot2.expect.
+#   boot 2: tests/boot2.input; tests/boot2.expect;
+#   boot 3: no server, only the machine's own storage: tests/offline.*.
 # Then two machines on one server (cluster_test).
 #   ./test.sh [host] [wasm]    (default: both)
 # Logs: build/test-<target>.log, build/test-wasm-boot2.log
@@ -127,6 +128,16 @@ for p in "${platforms[@]}"; do
     else
         echo "  boot 2 failed"
         tail -5 "$log2" | sed 's/^/  | /'
+        failed+=("$p")
+        continue
+    fi
+    log3="build/test-$p-offline.log"
+    if timeout "$TIMEOUT" node web/test/boot.mjs --input tests/offline.input --machine test --offline > "$log3" 2>&1 \
+        && check "$log3" offline "$p"; then
+        echo "  boot 3 (offline): $(grep -c . tests/offline.expect) checks"
+    else
+        echo "  boot 3 (offline) failed"
+        tail -5 "$log3" | sed 's/^/  | /'
         failed+=("$p")
         continue
     fi

@@ -30,3 +30,11 @@
 ^│ b +│ +8 │$
 ^15$
 ^music\.db$
+^copied 1 tables, 2 rows$
+^ann=3$
+^bob=5$
+^sql: the destination already has a table t
+^rows=2$
+^local: nothing kept for sql:back$
+^copied 1 keys$
+^kv: no such key$

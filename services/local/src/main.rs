@@ -142,13 +142,49 @@ impl Local {
                 String::from("ok")
             }
             (None, []) if t == "ls" => self.ls(),
+            (Some(("rm", what)), []) => self.remove(what),
             _ => {
                 for h in hs {
                     let _ = h.close();
                 }
-                String::from("error connect KIND:NAME | dup | ls")
+                String::from("error connect KIND:NAME | dup | ls | rm KIND:NAME")
             }
         }
+    }
+
+    /// Forgets `KIND:NAME` and everything kept for it.
+    fn remove(&mut self, what: &str) -> String {
+        let s = Storage(self.storage.0);
+        let found = match what.split_once(':') {
+            Some(("kv", n)) if name_ok(n) => {
+                let keys = self.storage.keys(&format!("k {n} ")).unwrap_or_default();
+                for k in &keys {
+                    let _ = self.storage.delete(k);
+                }
+                !keys.is_empty()
+            }
+            Some(("redis", n)) if name_ok(n) => {
+                self.caches.remove(n);
+                self.files("cache").remove(&s, &format!("/{n}"))
+            }
+            Some(("sql", n)) if name_ok(n) => {
+                // Its program first: it must not write the file again.
+                if let Some(db) = self.dbs.get(n) {
+                    let _ = db.task.kill();
+                    self.tasks.retain(|_, x| x != n);
+                    self.drop_db(n);
+                }
+                let sql = self.files("sql");
+                let db = sql.remove(&s, &format!("/{n}.db"));
+                for x in ["-journal", "-wal", "-shm"] {
+                    sql.remove(&s, &format!("/{n}.db{x}"));
+                }
+                db
+            }
+            Some(("fs", n)) if name_ok(n) => self.files(&format!("fs-{n}")).remove(&s, "/"),
+            _ => return format!("error cannot remove {what} (kv:NAME, redis:NAME, sql:NAME, fs:NAME)"),
+        };
+        if found { String::from("ok") } else { format!("error nothing kept for {what}") }
     }
 
     /// A store-protocol request on `redis:` / `sql:` (REDIS, SQL, CONNECT).
@@ -180,7 +216,7 @@ impl Local {
             (Some(&SQL), Kind::Sql(name)) => match decode(msg, 4) {
                 Some((_, f)) if text(f[0]) == name.as_str() => {
                     if !self.dbs.contains_key(name) && !self.start_db(name) {
-                        self.reply(slot, &fail("cannot start sqlite (is the sqlited image in the registry?)"));
+                        self.reply(slot, &fail("cannot start sqlite (its image, sqlited, comes from the server's registry the first time)"));
                         return;
                     }
                     self.dbs.get_mut(name).unwrap().ask(slot, text(f[1]), text(f[2]), text(f[3]));
@@ -282,10 +318,17 @@ impl Local {
     /// Database program `key` ended.
     fn db_ended(&mut self, key: u64) {
         let Some(name) = self.tasks.remove(&key) else { return };
-        let Some(db) = self.dbs.remove(&name) else { return };
-        println!("local: sqlite for {name} ended");
+        if self.dbs.contains_key(&name) {
+            println!("local: sqlite for {name} ended");
+            self.drop_db(&name);
+        }
+    }
+
+    /// Forgets database `name`'s program: whoever is waiting gets FAILED.
+    fn drop_db(&mut self, name: &str) {
+        let Some(db) = self.dbs.remove(name) else { return };
         for s in self.slots.iter_mut() {
-            if matches!(s, Some((_, Kind::Console(n))) if *n == name) {
+            if matches!(s, Some((_, Kind::Console(n))) if n == name) {
                 *s = None;
             }
         }

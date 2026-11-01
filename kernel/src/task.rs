@@ -89,13 +89,18 @@ pub fn thread_by_id(id: u32) -> Option<Arc<Thread>> {
 }
 
 /// Starts the program `image` as task `name` with `handles` (numbered
-/// 0, 1, ... in the new task).
+/// 0, 1, ... in the new task); its main gets how many.
 pub fn spawn(name: &str, image: &[u8], handles: Vec<Handle>, quota: &Arc<Quota>) -> Result<Arc<Task>, Error> {
+    let n = handles.len() as u64;
+    spawn_arg(name, image, handles, quota, n)
+}
+
+/// `spawn`, with `arg` for its main.
+fn spawn_arg(name: &str, image: &[u8], handles: Vec<Handle>, quota: &Arc<Quota>, arg: u64) -> Result<Arc<Task>, Error> {
     let charge = Charge::new(quota, Res::Tasks, 1)?;
     let aspace = Arc::new(AddrSpace::new(quota)?);
     aspace.set_self(Arc::downgrade(&aspace));
     let start = aspace.load(image)?;
-    let n = handles.len() as u64;
     let mut table = HandleTable::new();
     for h in handles {
         table.add(h)?;
@@ -113,7 +118,7 @@ pub fn spawn(name: &str, image: &[u8], handles: Vec<Handle>, quota: &Arc<Quota>)
         sig: SignalCell::new(0),
     });
     TASKS.lock().insert(task.id, task.clone());
-    new_thread(&task, Start { arg: n, ..start })?;
+    new_thread(&task, Start { arg, ..start })?;
     Ok(task)
 }
 
@@ -271,8 +276,9 @@ pub fn fault(t: &Arc<Thread>, what: core::fmt::Arguments) {
 }
 
 /// init gets the serial port (handle 0), the boot pack (handle 1), the
-/// root quota (handle 2); then, with a server, the server connection
-/// (handle 3) and ingress (handle 4).
+/// root quota (handle 2); then those of the host's channels it has, in
+/// order: the server connection, ingress, this machine's storage. Its main
+/// gets which it has (bit i = remote channel i).
 pub fn start_init() {
     let Some(init) = crate::bootimg::find("init") else {
         crate::println!("task: no init");
@@ -291,20 +297,16 @@ pub fn start_init() {
     }
     let root = crate::quota::root(arch::memory_total());
     handles.push(Handle { obj: Object::Quota(root.clone()), rights: Rights::ALL });
-    if let Some(r) = arch::remote_channel(0) {
-        crate::println!("task: server connection for init (handle 3)");
-        handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
-    }
-    if let Some(r) = arch::remote_channel(1) {
-        crate::println!("task: ingress from the server for init (handle 4)");
-        handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
-    }
-    if let Some(r) = arch::remote_channel(2) {
-        crate::println!("task: local storage for init (handle 5)");
-        handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
+    let mut have = 0u64;
+    for (i, what) in ["server connection", "ingress from the server", "local storage"].iter().enumerate() {
+        if let Some(r) = arch::remote_channel(i as u8) {
+            crate::println!("task: {} for init (handle {})", what, handles.len());
+            handles.push(Handle { obj: Object::Channel(r), rights: Rights::ALL });
+            have |= 1 << i;
+        }
     }
     crate::println!("task: root quota {} MiB", root.info().mem_limit >> 20);
-    match spawn("init", init, handles, &root) {
+    match spawn_arg("init", init, handles, &root, have) {
         Ok(t) => crate::println!("task: started init (task {})", t.id),
         Err(e) => crate::println!("task: init: {:?}", e),
     }

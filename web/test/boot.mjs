@@ -1,13 +1,15 @@
 // WASM boot test: starts the server (ruos serve), checks the page's headers, fetches the
 // kernel over HTTP and boots it in a worker thread (like the browser's kernel
 // Worker). Prints the console, exits with the kernel's shutdown code.
-//   node web/test/boot.mjs [--input FILE] [--machine NAME] [--drop-remote N] [--server URL]
+//   node web/test/boot.mjs [--input FILE] [--machine NAME] [--drop-remote N] [--server URL] [--offline]
 // FILE (default tests/m3.input) is typed once the shell is up; NAME names
 // the machine's disk on the server (and its node in the cluster); N: the
 // server connection is closed once after N answers (the kernel host
 // reconnects); URL: a server that is already running (machines that share
 // it are one cluster), else one is started here, with a small web server
 // for curl that it may reach (--http-allow); `@HTTP_PORT@` in FILE is its port. RUOS (the server binary), KERNEL_WASM override the paths.
+// --offline: the kernel is fetched from the server, but the machine gets no
+// connection to it (only its own storage, build/local/NAME).
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
@@ -31,6 +33,7 @@ const input = arg('--input', path.join(root, 'tests/m3.input'));
 const machine = arg('--machine', 'node');
 const dropRemoteAfter = Number(arg('--drop-remote', 0));
 const serverUrl = arg('--server', null);
+const offline = process.argv.includes('--offline');
 
 const fail = (msg) => {
   console.error(`boot.mjs: ${msg}`);
@@ -106,7 +109,9 @@ process.stdout.write(execFileSync(podimg, ['verify', base, 'hello']).toString())
 const remoteUrl = base.replace(/^http/, 'ws') + `/v1/remote?machine=${machine}`;
 // The machine's own storage (the browser's IndexedDB): build/local/MACHINE.
 const localDir = path.join(root, 'build/local', machine);
-const worker = new Worker(path.join(here, 'node_worker.mjs'), { workerData: { wasm, remoteUrl, dropRemoteAfter, localDir } });
+const worker = new Worker(path.join(here, 'node_worker.mjs'), {
+  workerData: { wasm, remoteUrl: offline ? undefined : remoteUrl, dropRemoteAfter, localDir },
+});
 let out = '';
 let typed = false;
 let snapshotLine = 'snapshot: none';
@@ -273,6 +278,7 @@ async function appsTest() {
 // What the machine left on the server: the pods' writable layers, and the
 // image `dock push` sent to the registry.
 async function afterBoot() {
+  if (offline) return;
   const pods = (await (await fetch(base + '/v1/pods')).text()).trim().split('\n').filter(Boolean);
   console.log(`server: writable layers ${pods.join(' ')}`);
   for (const p of pods) {
