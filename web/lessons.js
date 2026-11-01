@@ -258,8 +258,8 @@ export const LESSONS = [
     steps: [
       { cmd: 'cat kube/app-guestbook.toml', note: 'uses = ["sql:guestbook"]' },
       { cmd: 'kube apply kube/app-guestbook.toml kube/app-todo.toml kube/app-wiki.toml kube/app-short.toml kube/app-weather.toml', note: '五個網站（映像第一次用時從 registry 拉）' },
-      { cmd: 'kube get fn', note: 'URL 欄：在新分頁打開它們，留言、加待辦、寫 wiki、縮網址' },
-      { cmd: 'sql -d guestbook "SELECT * FROM notes"', note: 'shell 也拿得到這些資料庫：剛才的留言' },
+      { cmd: 'kube get fn', note: 'URL 欄：先在新分頁打開它們，留言、加待辦、寫 wiki、縮網址（表格是函式第一次收到請求時才建的，沒打開過，下面的 sql 會說 no such table）' },
+      { cmd: 'sql -d guestbook "SELECT * FROM notes"', note: 'shell 也拿得到這些資料庫：剛才在網頁上的留言' },
       { cmd: 'sql -d todo "SELECT * FROM todos"', note: '待辦' },
       { cmd: 'sql -d wiki "SELECT name, revisions, updated FROM pages"', note: 'wiki 的每一版都留著' },
       { cmd: 'sql -d short "SELECT * FROM links"', note: '短網址與點擊次數' },
