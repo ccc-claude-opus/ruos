@@ -5,7 +5,7 @@
 #   ./run.sh dist                               build everything into ruos/assets
 #                                               (what `cargo install ruos` carries) and
 #                                               build/release (upload to the release page)
-#   ./run.sh publish [cargo publish args]       dist, then publish the ruos crate
+#   ./run.sh publish [-y] [--dry-run]           = ./publish.sh (the release page, then crates.io)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 OUT="$ROOT/build"
@@ -162,18 +162,7 @@ case $cmd in
             cp "$o" "$rel/"
         done
         du -sh "$a"
-        v=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/ruos/Cargo.toml")
-        echo "upload the $(ls "$rel" | wc -l | tr -d ' ') files of build/release to the release v$v:"
-        echo "  gh release upload v$v build/release/*" ;;
-    publish)
-        # The assets are build output, ignored by git, so cargo calls the
-        # tree dirty: check that everything else is committed first.
-        if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
-            echo "run.sh: commit your changes first:" >&2
-            git -C "$ROOT" status --short >&2
-            exit 1
-        fi
-        "$0" dist
-        (cd "$ROOT/ruos" && cargo publish --allow-dirty "$@") ;;
+        echo "build/release: $(ls "$rel" | wc -l | tr -d ' ') objects for the release page (./publish.sh puts them there)" ;;
+    publish) exec "$ROOT/publish.sh" "$@" ;;
     *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

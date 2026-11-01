@@ -10,7 +10,7 @@ ruos：用 Rust 寫的能力式（capability）微核心教學作業系統，內
 ./run.sh wasm [port]             # 建置 + ruos serve（含 registry），開 http://127.0.0.1:8780（函式埠 8790）；預覽：.claude/launch.json 的 `ruos`，埠 8781
 ./run.sh build                   # 只建置：build/kernel.wasm、build/images、build/store、target/release/ruos
 ./run.sh dist                    # 建全部，放進 ruos/assets（發布用）
-./run.sh publish [--dry-run]     # 檢查 git 乾淨 → dist → cargo publish --allow-dirty（使用者自己發布）
+./publish.sh [-y] [--dry-run]    # 一鍵發布（使用者自己跑）：檢查 → dist → release → crates.io；= ./run.sh publish
 ./test.sh [host] [wasm]          # 預設兩個；log 在 build/test-*.log
 cargo test --release             # 主機端 crate：objstore（BLAKE3 對照 blake3 crate）、podimg、ruos
 target/release/podimg ls --store build/store      # 映像清單；build / pack / verify URL NAME / hash FILE
@@ -148,7 +148,7 @@ node web/test/boot.mjs           # 開機測試（需先 ./run.sh build）
 - `ruos/` 是唯一要發布的 crate（原本的 podsrv；不依賴 workspace 的其他 crate：物件 id 用自己的 `id.rs` + `blake3`）。指令：`ruos [web] [--port N] [--no-open]`（預設：啟動伺服器、開瀏覽器）、`ruos serve …`（開發用：run.sh、test.sh、web/test/boot.mjs）。資料在 `$RUOS_HOME` 或 `~/.ruos`；第一次（或新版本）把內含的 registry 放到 `HOME/store`（物件只補缺的，refs 換新版，push 進來的映像留著）。
 - 內含的系統：`./run.sh dist` 建好後填 `ruos/assets/`（`web/*.html|js|css`、`kernel.wasm`、`store/` = `build/images`）；`ruos/build.rs` 把它打包成 `OUT_DIR/assets.bin`（路徑長度 u32 + 路徑 + 長度 u64 + 內容），`assets.rs` 以 `include_bytes!` 帶著。`ruos/assets` 在 .gitignore 裡，但 Cargo.toml 的 `include` 有它，所以 `cargo package` 會帶上（crates.io 上限 10 MiB）。沒有 assets 的建置（repo 裡平常的）只能 `ruos serve` 從磁碟供檔。
 - 太大的映像（sqlited、sqlite3，`build/upstream`）不放進 crate：`dist` 把它們的 refs 放進 `ruos/assets/store/refs`，物件 id（不在其他映像裡的）寫進 `ruos/assets/store/upstream`，物件本身複製到 `build/release/`（檔名就是 id），要上傳到 GitHub release `vVERSION`（`gh release upload vVERSION build/release/*`，使用者做）。`ruos` 缺一個列在 `upstream` 裡的物件時（`/v1/blobs/ID`、remote 的 `OBJ_SIZE`/`OBJ_READ_AT`），從 `--upstream URL`（預設 `https://github.com/ccc-claude-opus/ruos/releases/download/vVERSION`，`none` 關掉）抓 `URL/ID`，驗 BLAKE3 後存進 `STORE/objects`（`ruos/src/upstream.rs`）。`install` 在新版本時也換掉 `upstream` 清單。
-- 發布步驟：`./run.sh publish`（使用者自己跑；要 crates.io 帳號）：先確認 git 沒有未 commit 的變更，再 `dist`，再 `cargo publish --allow-dirty`（`ruos/assets` 被 git 忽略，cargo 把它們算成「未 commit」，所以要 `--allow-dirty`；多的引數交給 cargo，例如 `--dry-run`）。發布前要先把 `build/release/` 上傳到同版本的 release，不然新安裝的人用不到 sqlite。使用者端只需要穩定版 Rust（`rust-version = 1.85`）。
+- 發布步驟：`./publish.sh`（使用者自己跑；`./run.sh publish` 也是它）：檢查 git 乾淨且已 push、crates.io 還沒有這個版本（`/api/v1/crates/ruos/VERSION` 要 404）、有 crates.io token → `run.sh dist` → `cargo publish --dry-run`（印出 crate 大小）→ 問一次（`-y` 不問）→ GitHub release `vVERSION`：沒有就 `gh release create`（tag 建在這個 commit），有就只補上缺的物件，再確認 `build/release` 的每個檔案都在 → `cargo publish --allow-dirty`（`ruos/assets` 被 git 忽略，cargo 算它們「未 commit」）。`--dry-run` 什麼都不發布，只說 release 缺幾個物件。release 一定先於 crates.io：新安裝的人第一次用 sqlite 就要從那裡拿。2.0.0 已於 2026-11-01 發布（release v2.0.0 的 10 個物件與 crate 的 `store/upstream` 一致）。使用者端只需要穩定版 Rust（`rust-version = 1.85`）。
 
 ## 教學介面（M11–M13）
 

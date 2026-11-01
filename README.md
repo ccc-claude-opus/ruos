@@ -28,7 +28,8 @@ ruos                      # 啟動並在瀏覽器打開
 
 ```sh
 ./run.sh wasm             # 建置後開 http://127.0.0.1:8780（瀏覽器版）
-./run.sh dist             # 建全部並放進 ruos/assets（發布 ruos 套件用）；build/release 要上傳到同版本的 GitHub release
+./run.sh dist             # 建全部並放進 ruos/assets（發布 ruos 套件用）
+./publish.sh              # 一鍵發布：GitHub release vVERSION（sqlite 的物件）再 crates.io；--dry-run 只檢查
 ./test.sh                 # 完整測試：主機端 crate + 瀏覽器版（Node 裡開機）
 cargo test --release      # 主機端 crate：objstore、podimg、ruos
 ```
